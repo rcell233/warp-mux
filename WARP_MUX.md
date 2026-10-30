@@ -10,7 +10,7 @@ The macOS fork uses two simultaneous navigation levels:
 
 ## Connection flow
 
-Click **New host** (or Cmd+T) to open the connection chooser. Choose **Local terminal** or one
+Click **+** in the native top tab bar (or Cmd+T) to open the connection chooser. Choose **Local terminal** or one
 of your saved SSH hosts. The chooser closes when the host tab opens. Opening the same host again
 selects its existing host tab. Host tabs and zmx windows are separate navigation levels;
 horizontal and vertical tab layouts are no longer alternatives in this fork.
@@ -22,7 +22,7 @@ independent. Closing a host tab disconnects its local clients; it never kills re
 
 ## Saved host management
 
-From **New host → Manage SSH hosts**, choose **Add from SSH config**. Only this screen reads and
+From **+ → Manage SSH hosts**, choose **Add from SSH config**. Only this screen reads and
 shows all concrete aliases in `~/.ssh/config` and ordinary Include files/globs. Select individual
 aliases and click **Add hosts**. Already-added aliases are marked and cannot be selected twice.
 
@@ -51,6 +51,28 @@ The UI calls zmx sessions “windows.” It does not invent a second multiplexer
 content in a web view. Session lists currently refresh on host creation and manually; external
 session creation/removal is reflected after Refresh. Existing Warp split-pane functionality
 remains inside the selected native terminal.
+
+## File browser
+
+The folder button in the window rail, Project Explorer toolbar entry, and its shortcut open a
+floating file browser. It overlays the terminal instead of adding a docked panel. Escape, the
+close button, or clicking outside dismisses it. Other Warp tools retain their native toolbar.
+
+Choose **Base path** and press Go/Enter. Valid paths are remembered per SSH host (and separately
+for Local) in the saved-host registry. The browser starts at that root, includes hidden files,
+shows folders first, and lets you navigate subdirectories or return up as far as the base path.
+Changing the input does not affect navigation until Go/Enter. Listings are capped at 2,000 entries.
+
+Use **Download** beside a file and choose a local destination in the system Save dialog. Transfers
+run independently of the terminal using OpenSSH SFTP and the host alias from SSH config. A failed
+transfer leaves an existing destination intact. The modal can close while a download continues;
+a toast reports its outcome. Directory downloads are not supported.
+
+Listing requires `python3` on the selected host; remote downloads require its SFTP subsystem.
+Background SSH/SFTP authentication uses your agent or reusable ControlMaster connection, just
+like zmx discovery. This does not add a password store. The native Project Explorer in this
+upstream revision does not support ordinary SSH sessions, so the floating browser supplies
+that path using the saved SSH connection.
 
 ## Download
 

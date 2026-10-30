@@ -1,5 +1,6 @@
 pub mod config;
 pub mod core;
+pub mod files;
 pub mod hosts;
 pub mod navigation;
 

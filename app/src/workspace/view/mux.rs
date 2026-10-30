@@ -10,7 +10,7 @@ use warpui::elements::{
     Align, Border, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container,
     CornerRadius, CrossAxisAlignment, Dismiss, Element, Expanded, Flex, Hoverable,
     MainAxisAlignment, MainAxisSize, MouseStateHandle, Padding, ParentElement, Radius,
-    SavePosition, ScrollbarWidth, Shrinkable, Text,
+    ScrollbarWidth, Shrinkable, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::platform::Cursor;
@@ -27,8 +27,11 @@ use crate::workspace::mux::hosts::SavedHosts;
 use crate::workspace::mux::navigation::{HostId, Navigation, Target};
 use crate::workspace::{Workspace, WorkspaceAction, mux};
 
+mod files;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum MuxDialog {
+    Files,
     NewHost,
     ManageHosts,
     ImportHosts,
@@ -46,6 +49,7 @@ struct DiscoveryState {
 #[derive(Default)]
 pub(super) struct MuxPanelState {
     navigation: Option<Navigation<EntityId>>,
+    files: files::FileBrowser,
     window_name_editor: Option<ViewHandle<EditorView>>,
     window_name: String,
     saved: SavedHosts,
@@ -62,7 +66,6 @@ pub(super) struct MuxPanelState {
     buttons: RefCell<HashMap<String, button::Button>>,
     session_scroll: ClippedScrollStateHandle,
     dialog_scroll: ClippedScrollStateHandle,
-    host_scroll: ClippedScrollStateHandle,
 }
 
 fn registry_path() -> PathBuf {
@@ -118,6 +121,7 @@ impl Workspace {
                 ctx.notify();
             },
         );
+        self.initialize_mux_files(ctx);
         self.refresh_mux_host(0, ctx);
     }
 
@@ -558,86 +562,63 @@ impl Workspace {
         self.mux_panel.dialog.is_some()
     }
 
-    pub(super) fn render_mux_host_bar(&self, app: &AppContext) -> Box<dyn Element> {
-        let appearance = Appearance::as_ref(app);
-        let state = &self.mux_panel;
-        let mut hosts = Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .with_spacing(4.);
-        if let Some(nav) = &state.navigation {
-            for host in &nav.hosts {
-                let selected = nav.selected == host.id;
-                let icon = if matches!(host.target, Target::Local) {
-                    Icon::Terminal
-                } else {
-                    Icon::Globe
-                };
-                let mut row = Flex::row()
-                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                    .with_child(self.mux_row(
-                        &format!("host:{}", host.id),
-                        host.target.label(),
-                        icon,
+    pub(super) fn add_mux_host_tabs(
+        &self,
+        bar: &mut Flex,
+        hover_fixed_width: Option<f32>,
+        app: &AppContext,
+    ) {
+        use crate::tab::{TabBarState, TabComponent};
+        use crate::workspace::tab_settings::TabSettings;
+        let Some(nav) = &self.mux_panel.navigation else {
+            return;
+        };
+        let state = TabBarState {
+            tab_count: nav.hosts.len(),
+            active_tab_index: nav.hosts.iter().position(|host| host.id == nav.selected),
+            is_any_tab_renaming: false,
+            is_any_tab_dragging: false,
+            hover_fixed_width,
+        };
+        for (index, host) in nav.hosts.iter().enumerate() {
+            if let Some(tab) = self
+                .tabs
+                .iter()
+                .find(|tab| tab.pane_group.id() == host.anchor)
+            {
+                bar.add_child(
+                    TabComponent::new(
+                        index,
+                        state,
+                        tab,
+                        self.tab_rename_editor.clone(),
+                        TabSettings::as_ref(app).close_button_position,
+                        false,
+                        app,
+                    )
+                    .with_navigation(
+                        host.target.label().to_owned(),
                         WorkspaceAction::ActivateMuxHost(host.id),
-                        selected,
-                        appearance,
-                    ));
-                row.add_child(self.mux_button(
-                    &format!("close:{}", host.id),
-                    button::Content::Icon(Icon::X),
-                    WorkspaceAction::CloseMuxHost(host.id),
-                    false,
-                    false,
-                    appearance,
-                ));
-                hosts.add_child(
-                    Container::new(row.finish())
-                        .with_background(if selected {
-                            appearance.theme().surface_2()
-                        } else {
-                            appearance.theme().surface_1()
-                        })
-                        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
-                        .finish(),
+                        WorkspaceAction::CloseMuxHost(host.id),
+                    )
+                    .build()
+                    .finish(),
                 );
             }
         }
-        let scroll = ClippedScrollable::horizontal(
-            state.host_scroll.clone(),
-            hosts.finish(),
-            ScrollbarWidth::Custom(3.),
-            appearance.theme().nonactive_ui_detail().into(),
-            appearance.theme().active_ui_detail().into(),
-            warpui::elements::Fill::None,
-        )
-        .with_overlayed_scrollbar()
-        .finish();
-        let row = Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(Shrinkable::new(1., scroll).finish())
-            .with_child(self.mux_button(
-                "new-host",
-                button::Content::IconAndLabel(Icon::Plus, "New host".into()),
+        bar.add_child(
+            self.render_tab_bar_icon_button(
+                Appearance::as_ref(app),
+                Icon::Plus,
+                &self.mouse_states.new_tab_button,
                 WorkspaceAction::ShowMuxNewHost,
+                "New host tab".into(),
+                None,
                 false,
                 false,
-                appearance,
-            ))
-            .finish();
-        let bar = ConstrainedBox::new(
-            Container::new(row)
-                .with_padding(Padding::uniform(6.).with_left(78.))
-                .with_background(appearance.theme().surface_1())
-                .with_border(Border::bottom(1.).with_border_fill(appearance.theme().outline()))
-                .finish(),
-        )
-        .with_height(48.)
-        .finish();
-        SavePosition::new(
-            self.render_tab_bar_hoverable(bar),
-            super::TAB_BAR_POSITION_ID,
-        )
-        .finish()
+            )
+            .finish(),
+        );
     }
 
     pub(super) fn render_mux_layout(
@@ -654,7 +635,21 @@ impl Workspace {
         let discovery = state.discovery.get(&host.id);
         let mut header = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(Expanded::new(1., mux_text("ZMX WINDOWS", 11., true, appearance)).finish());
+            .with_child(
+                Expanded::new(
+                    1.,
+                    mux_text("Windows", appearance.ui_font_size(), false, appearance),
+                )
+                .finish(),
+            );
+        header.add_child(self.mux_button(
+            "files",
+            button::Content::Icon(Icon::Folder),
+            WorkspaceAction::ShowMuxFiles,
+            false,
+            false,
+            appearance,
+        ));
         header.add_child(self.mux_button(
             "new-window",
             button::Content::Icon(Icon::Plus),
@@ -729,7 +724,7 @@ impl Workspace {
                     .finish(),
             )
             .with_padding(Padding::uniform(8.))
-            .with_background(appearance.theme().surface_1())
+            .with_background(appearance.theme().background())
             .with_border(Border::right(1.).with_border_fill(appearance.theme().outline()))
             .finish(),
         )
@@ -786,6 +781,9 @@ impl Workspace {
     pub(super) fn render_mux_dialog(&self, app: &AppContext) -> Option<Box<dyn Element>> {
         let state = &self.mux_panel;
         let dialog = state.dialog?;
+        if dialog == MuxDialog::Files {
+            return Some(self.render_mux_files(app));
+        }
         let window_name_exists = state
             .navigation
             .as_ref()
@@ -798,6 +796,7 @@ impl Workspace {
             });
         let appearance = Appearance::as_ref(app);
         let (title, subtitle) = match dialog {
+            MuxDialog::Files => unreachable!(),
             MuxDialog::NewHost => (
                 "New host tab",
                 "Open a local workspace or connect to a saved SSH host.",
@@ -836,6 +835,7 @@ impl Workspace {
             body.add_child(mux_note(error, appearance));
         }
         match dialog {
+            MuxDialog::Files => unreachable!(),
             MuxDialog::NewWindow => {
                 if let Some(editor) = &state.window_name_editor {
                     body.add_child(
@@ -954,6 +954,7 @@ impl Workspace {
             .with_main_axis_alignment(MainAxisAlignment::End)
             .with_spacing(8.);
         match dialog {
+            MuxDialog::Files => unreachable!(),
             MuxDialog::NewWindow => {
                 footer.add_child(self.mux_button(
                     "cancel-window",
@@ -1099,7 +1100,7 @@ impl Workspace {
             let color = theme.main_text_color(theme.background());
             let row = Flex::row()
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_spacing(10.)
+                .with_spacing(8.)
                 .with_child(
                     ConstrainedBox::new(icon.to_warpui_icon(color).finish())
                         .with_width(16.)
@@ -1109,22 +1110,38 @@ impl Workspace {
                 .with_child(
                     Shrinkable::new(
                         1.,
-                        Text::new_inline(label, appearance.ui_font_family(), 13.)
-                            .with_color(color.into())
-                            .with_clip(ClipConfig::ellipsis())
-                            .finish(),
+                        Text::new_inline(
+                            label,
+                            appearance.ui_font_family(),
+                            appearance.ui_font_size(),
+                        )
+                        .with_color(color.into())
+                        .with_clip(ClipConfig::ellipsis())
+                        .finish(),
                     )
                     .finish(),
                 )
                 .finish();
-            let mut container = Container::new(row)
-                .with_padding(Padding::uniform(9.))
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(5.)));
-            if selected {
-                container = container.with_background(internal_colors::fg_overlay_3(theme));
-            } else if hover.is_hovered() {
-                container = container.with_background(internal_colors::fg_overlay_2(theme));
+            let mut container = Container::new(warpui::elements::Clipped::new(row).finish())
+                .with_padding(Padding::uniform(8.))
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(
+                    super::vertical_tabs::ROW_CORNER_RADIUS,
+                )));
+            if let Some(background) = super::vertical_tabs::pane_row_background(
+                None,
+                selected,
+                false,
+                hover.is_hovered(),
+                false,
+                theme,
+            ) {
+                container = container.with_background(background);
             }
+            container = container.with_border(Border::all(1.).with_border_fill(if selected {
+                internal_colors::fg_overlay_3(theme).into()
+            } else {
+                warpui::elements::Fill::None
+            }));
             container.finish()
         })
         .on_click(move |ctx, _, _| ctx.dispatch_typed_action(action.clone()))

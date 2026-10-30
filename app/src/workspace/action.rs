@@ -130,6 +130,14 @@ pub enum WorkspaceAction {
     #[cfg(target_os = "macos")]
     ImportMuxHosts,
     #[cfg(target_os = "macos")]
+    ShowMuxFiles,
+    #[cfg(target_os = "macos")]
+    ApplyMuxBasePath,
+    #[cfg(target_os = "macos")]
+    OpenMuxDirectory(String),
+    #[cfg(target_os = "macos")]
+    DownloadMuxFile(String),
+    #[cfg(target_os = "macos")]
     ShowMuxNewHost,
     #[cfg(target_os = "macos")]
     ShowMuxNewWindow,
@@ -965,6 +973,10 @@ impl WorkspaceAction {
             | AuthenticateMuxHost(_) => true,
             #[cfg(target_os = "macos")]
             ImportMuxHosts
+            | ShowMuxFiles
+            | ApplyMuxBasePath
+            | OpenMuxDirectory(_)
+            | DownloadMuxFile(_)
             | ShowMuxNewHost
             | ShowMuxNewWindow
             | ShowMuxManageHosts

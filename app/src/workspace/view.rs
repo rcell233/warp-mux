@@ -21370,123 +21370,133 @@ impl Workspace {
             })
             .finish();
         } else {
-            // Copy from our saved tab_bar_state to ensure all tabs get rendered with the same state
-            let active_tab_index = if FeatureFlag::AgentManagementView.is_enabled()
-                && self.current_workspace_state.is_agent_management_view_open
+            #[cfg(target_os = "macos")]
+            self.add_mux_host_tabs(&mut tab_bar, hover_fixed_width, ctx);
+            #[cfg(not(target_os = "macos"))]
             {
-                None
-            } else {
-                Some(self.active_tab_index)
-            };
-
-            let drag_model = CrossWindowTabDrag::as_ref(ctx);
-            let is_any_group_dragging = self
-                .tab_groups
-                .values()
-                .any(|g| g.draggable_state.is_dragging());
-            let tab_bar_state = TabBarState {
-                tab_count: self.tabs.len(),
-                active_tab_index,
-                is_any_tab_renaming: self.current_workspace_state.is_tab_being_renamed(),
-                is_any_tab_dragging: self.current_workspace_state.is_tab_being_dragged
-                    || drag_model.is_active()
-                    || is_any_group_dragging,
-                hover_fixed_width,
-            };
-            // The detached-placeholder slot in this (source) window is
-            // collapsed to zero width only while the dragged tab is actually
-            // away (floating in the preview, or ghosted / handed off to
-            // another window). While the cursor is back over this window's own
-            // tab bar the placeholder is reordered in place like an in-window
-            // drag and must stay full width, otherwise the drop zone vanishes
-            // and the slot oscillates ("fuzzy shake"). See
-            // `CrossWindowTabDrag::collapsed_source_placeholder_index`.
-            let transferred_tab_index =
-                drag_model.collapsed_source_placeholder_index(self.window_id);
-            // Ghost state for cross-window drag hovering over this tab bar.
-            let ghost = drag_model.ghost_state_for_window(self.window_id);
-
-            // Collapse tabs into render slots: each ungrouped tab is a
-            // `Single`, and each contiguous run of same-group tabs is one
-            // `Group`.
-            let slots = self.tab_bar_slots();
-
-            // Render each slot in the tab bar, either an individual tab or tab group.
-            for slot in &slots {
-                let start_index = match slot {
-                    TabBarSlot::Single { index } => *index,
-                    TabBarSlot::Group { first_index, .. } => *first_index,
-                };
-                // Insert ghost slot before this slot's first tab if the drag
-                // would land here.
-                if ghost
-                    .as_ref()
-                    .is_some_and(|g| g.insertion_index == start_index)
+                // Copy from our saved tab_bar_state to ensure all tabs get rendered with the same state
+                let active_tab_index = if FeatureFlag::AgentManagementView.is_enabled()
+                    && self.current_workspace_state.is_agent_management_view_open
                 {
-                    tab_bar.add_child(self.render_ghost_tab_slot(appearance, ctx));
-                }
+                    None
+                } else {
+                    Some(self.active_tab_index)
+                };
 
-                match slot {
-                    TabBarSlot::Group {
-                        group_id,
-                        first_index,
-                        run_len,
-                    } => {
-                        // Ungrouped insertion just before the group; a drop into
-                        // the group highlights the group itself instead.
-                        if show_before_indicator(self.hovered_tab_index, *first_index, None) {
-                            tab_bar.add_child(self.render_tab_hover_indicator(appearance));
-                        }
-                        // Filtered above; the group must exist in `tab_groups`.
-                        let group = self.tab_groups[group_id].clone();
-                        tab_bar.add_child(self.render_horizontal_tab_group(
-                            &group,
-                            *first_index,
-                            *run_len,
-                            tab_bar_state,
-                            *first_index == 0,
-                            appearance,
-                            ctx,
-                        ));
+                let drag_model = CrossWindowTabDrag::as_ref(ctx);
+                let is_any_group_dragging = self
+                    .tab_groups
+                    .values()
+                    .any(|g| g.draggable_state.is_dragging());
+                let tab_bar_state = TabBarState {
+                    tab_count: self.tabs.len(),
+                    active_tab_index,
+                    is_any_tab_renaming: self.current_workspace_state.is_tab_being_renamed(),
+                    is_any_tab_dragging: self.current_workspace_state.is_tab_being_dragged
+                        || drag_model.is_active()
+                        || is_any_group_dragging,
+                    hover_fixed_width,
+                };
+                // The detached-placeholder slot in this (source) window is
+                // collapsed to zero width only while the dragged tab is actually
+                // away (floating in the preview, or ghosted / handed off to
+                // another window). While the cursor is back over this window's own
+                // tab bar the placeholder is reordered in place like an in-window
+                // drag and must stay full width, otherwise the drop zone vanishes
+                // and the slot oscillates ("fuzzy shake"). See
+                // `CrossWindowTabDrag::collapsed_source_placeholder_index`.
+                let transferred_tab_index =
+                    drag_model.collapsed_source_placeholder_index(self.window_id);
+                // Ghost state for cross-window drag hovering over this tab bar.
+                let ghost = drag_model.ghost_state_for_window(self.window_id);
+
+                // Collapse tabs into render slots: each ungrouped tab is a
+                // `Single`, and each contiguous run of same-group tabs is one
+                // `Group`.
+                let slots = self.tab_bar_slots();
+
+                // Render each slot in the tab bar, either an individual tab or tab group.
+                for slot in &slots {
+                    let start_index = match slot {
+                        TabBarSlot::Single { index } => *index,
+                        TabBarSlot::Group { first_index, .. } => *first_index,
+                    };
+                    // Insert ghost slot before this slot's first tab if the drag
+                    // would land here.
+                    if ghost
+                        .as_ref()
+                        .is_some_and(|g| g.insertion_index == start_index)
+                    {
+                        tab_bar.add_child(self.render_ghost_tab_slot(appearance, ctx));
                     }
-                    TabBarSlot::Single { index } => {
-                        let i = *index;
-                        let is_transferred = transferred_tab_index == Some(i);
-                        // Single tabs are ungrouped, so their before-indicator
-                        // only matches an ungrouped insertion.
-                        if !is_transferred && show_before_indicator(self.hovered_tab_index, i, None)
-                        {
-                            tab_bar.add_child(self.render_tab_hover_indicator(appearance));
+
+                    match slot {
+                        TabBarSlot::Group {
+                            group_id,
+                            first_index,
+                            run_len,
+                        } => {
+                            // Ungrouped insertion just before the group; a drop into
+                            // the group highlights the group itself instead.
+                            if show_before_indicator(self.hovered_tab_index, *first_index, None) {
+                                tab_bar.add_child(self.render_tab_hover_indicator(appearance));
+                            }
+                            // Filtered above; the group must exist in `tab_groups`.
+                            let group = self.tab_groups[group_id].clone();
+                            tab_bar.add_child(self.render_horizontal_tab_group(
+                                &group,
+                                *first_index,
+                                *run_len,
+                                tab_bar_state,
+                                *first_index == 0,
+                                appearance,
+                                ctx,
+                            ));
                         }
-                        if is_transferred {
-                            tab_bar.add_child(
-                                ConstrainedBox::new(self.render_tab_in_tab_bar(
+                        TabBarSlot::Single { index } => {
+                            let i = *index;
+                            let is_transferred = transferred_tab_index == Some(i);
+                            // Single tabs are ungrouped, so their before-indicator
+                            // only matches an ungrouped insertion.
+                            if !is_transferred
+                                && show_before_indicator(self.hovered_tab_index, i, None)
+                            {
+                                tab_bar.add_child(self.render_tab_hover_indicator(appearance));
+                            }
+                            if is_transferred {
+                                tab_bar.add_child(
+                                    ConstrainedBox::new(self.render_tab_in_tab_bar(
+                                        i,
+                                        tab_bar_state,
+                                        ctx,
+                                    ))
+                                    .with_width(0.)
+                                    .finish(),
+                                );
+                            } else {
+                                tab_bar.add_child(self.render_tab_in_tab_bar(
                                     i,
                                     tab_bar_state,
                                     ctx,
-                                ))
-                                .with_width(0.)
-                                .finish(),
-                            );
-                        } else {
-                            tab_bar.add_child(self.render_tab_in_tab_bar(i, tab_bar_state, ctx));
+                                ));
+                            }
                         }
                     }
                 }
-            }
 
-            // Fencepost: ghost slot or hover indicator after all tabs.
-            if ghost
-                .as_ref()
-                .is_some_and(|g| g.insertion_index == self.tabs.len())
-            {
-                tab_bar.add_child(self.render_ghost_tab_slot(appearance, ctx));
-            } else if show_before_indicator(self.hovered_tab_index, self.tabs.len(), None) {
-                tab_bar.add_child(self.render_tab_hover_indicator(appearance));
-            }
+                // Fencepost: ghost slot or hover indicator after all tabs.
+                if ghost
+                    .as_ref()
+                    .is_some_and(|g| g.insertion_index == self.tabs.len())
+                {
+                    tab_bar.add_child(self.render_ghost_tab_slot(appearance, ctx));
+                } else if show_before_indicator(self.hovered_tab_index, self.tabs.len(), None) {
+                    tab_bar.add_child(self.render_tab_hover_indicator(appearance));
+                }
 
-            if ContextFlag::CreateNewSession.is_enabled() {
-                tab_bar.add_child(self.render_new_session_button(ctx));
+                if ContextFlag::CreateNewSession.is_enabled() {
+                    tab_bar.add_child(self.render_new_session_button(ctx));
+                }
             }
         }
 
@@ -23153,6 +23163,11 @@ impl Workspace {
                 )
             }
             HeaderToolbarItemKind::ToolsPanel => {
+                if cfg!(target_os = "macos")
+                    && self.left_panel_view.as_ref(app).is_file_tree_active()
+                {
+                    return None;
+                }
                 if !pane_group.left_panel_open || warpui::platform::is_mobile_device() {
                     return None;
                 }
@@ -24060,6 +24075,11 @@ impl Workspace {
     }
 
     fn open_left_panel_view(&mut self, action: &LeftPanelAction, ctx: &mut ViewContext<Self>) {
+        #[cfg(target_os = "macos")]
+        if matches!(action, LeftPanelAction::ProjectExplorer) {
+            self.open_mux_files(ctx);
+            return;
+        }
         if !self.active_tab_pane_group().as_ref(ctx).left_panel_open {
             self.toggle_left_panel(ctx);
         }
@@ -24213,6 +24233,14 @@ impl TypedActionView for Workspace {
         match action {
             #[cfg(target_os = "macos")]
             ImportMuxHosts => self.show_mux_dialog(Some(mux::MuxDialog::ImportHosts), ctx),
+            #[cfg(target_os = "macos")]
+            ShowMuxFiles => self.open_mux_files(ctx),
+            #[cfg(target_os = "macos")]
+            ApplyMuxBasePath => self.apply_mux_base_path(ctx),
+            #[cfg(target_os = "macos")]
+            OpenMuxDirectory(path) => self.load_mux_directory(path.clone(), ctx),
+            #[cfg(target_os = "macos")]
+            DownloadMuxFile(path) => self.download_mux_file(path.clone(), ctx),
             #[cfg(target_os = "macos")]
             ShowMuxNewHost => self.show_mux_dialog(Some(mux::MuxDialog::NewHost), ctx),
             #[cfg(target_os = "macos")]
@@ -25025,6 +25053,11 @@ impl TypedActionView for Workspace {
                 }
             }
             ToggleLeftPanel => {
+                #[cfg(target_os = "macos")]
+                if self.left_panel_view.as_ref(ctx).is_file_tree_active() {
+                    self.open_mux_files(ctx);
+                    return;
+                }
                 let active_pane_group = self.active_tab_pane_group().clone();
                 let was_open = active_pane_group.read(ctx, |pg, _| pg.left_panel_open);
 
@@ -26509,6 +26542,17 @@ impl TypedActionView for Workspace {
                     },
                 );
             }
+            #[cfg(target_os = "macos")]
+            ToggleProjectExplorer | OpenProjectExplorer => {
+                if matches!(action, ToggleProjectExplorer)
+                    && self.mux_panel.dialog == Some(mux::MuxDialog::Files)
+                {
+                    self.show_mux_dialog(None, ctx);
+                } else {
+                    self.open_mux_files(ctx);
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
             ToggleProjectExplorer => {
                 if *CodeSettings::as_ref(ctx).show_project_explorer {
                     let is_showing = self.left_panel_view.as_ref(ctx).active_view()
@@ -26516,6 +26560,7 @@ impl TypedActionView for Workspace {
                     self.toggle_left_panel_view(&LeftPanelAction::ProjectExplorer, is_showing, ctx);
                 }
             }
+            #[cfg(not(target_os = "macos"))]
             OpenProjectExplorer => {
                 if *CodeSettings::as_ref(ctx).show_project_explorer {
                     self.open_left_panel_view(&LeftPanelAction::ProjectExplorer, ctx);
@@ -27051,10 +27096,7 @@ impl View for Workspace {
             // does not affect the tab.
             let mut outer_column = Flex::column();
             if tab_bar_mode == ShowTabBar::Stacked {
-                #[cfg(not(target_os = "macos"))]
                 outer_column.add_child(self.render_tab_bar(self.tab_fixed_width, appearance, app));
-                #[cfg(target_os = "macos")]
-                outer_column.add_child(self.render_mux_host_bar(app));
             }
             let content = self.render_banner_and_active_tab(app, appearance);
             #[cfg(target_os = "macos")]
@@ -27068,10 +27110,7 @@ impl View for Workspace {
         } else {
             let mut outer_column = Flex::column();
             if tab_bar_mode == ShowTabBar::Stacked {
-                #[cfg(not(target_os = "macos"))]
                 outer_column.add_child(self.render_tab_bar(self.tab_fixed_width, appearance, app));
-                #[cfg(target_os = "macos")]
-                outer_column.add_child(self.render_mux_host_bar(app));
             }
             let content = self.render_banner_and_active_tab(app, appearance);
             #[cfg(target_os = "macos")]

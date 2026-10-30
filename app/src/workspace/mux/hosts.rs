@@ -9,6 +9,8 @@ use super::core::valid_host;
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SavedHosts {
     pub aliases: Vec<String>,
+    #[serde(default)]
+    pub base_paths: std::collections::BTreeMap<String, String>,
 }
 
 impl SavedHosts {

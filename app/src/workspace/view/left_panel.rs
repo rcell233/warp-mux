@@ -1119,6 +1119,11 @@ impl LeftPanelView {
         force_open: bool,
         ctx: &mut ViewContext<Self>,
     ) {
+        #[cfg(target_os = "macos")]
+        if matches!(action, LeftPanelAction::ProjectExplorer) {
+            ctx.dispatch_typed_action(WorkspaceAction::ShowMuxFiles);
+            return;
+        }
         match action {
             LeftPanelAction::ProjectExplorer => {
                 active_view_state::set(self, ToolPanelView::ProjectExplorer, ctx);
