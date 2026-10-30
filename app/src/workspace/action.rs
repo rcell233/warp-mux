@@ -127,6 +127,19 @@ pub enum AutoCloudHandoffTrigger {
 
 #[derive(Debug, Clone)]
 pub enum WorkspaceAction {
+    #[cfg(target_os = "macos")]
+    ImportMuxHosts,
+    #[cfg(target_os = "macos")]
+    ToggleMuxHost(String),
+    #[cfg(target_os = "macos")]
+    RefreshMuxHost(String),
+    #[cfg(target_os = "macos")]
+    OpenMuxSsh(String),
+    #[cfg(target_os = "macos")]
+    OpenMuxSession {
+        host: String,
+        session: super::mux::core::Session,
+    },
     ActivateTab(usize),
     ActivatePrevTab,
     ActivateNextTab,
@@ -923,6 +936,10 @@ impl WorkspaceAction {
     pub fn should_save_app_state_on_action(&self) -> bool {
         use WorkspaceAction::*;
         match self {
+            #[cfg(target_os = "macos")]
+            OpenMuxSession { .. } | OpenMuxSsh(_) => true,
+            #[cfg(target_os = "macos")]
+            ImportMuxHosts | ToggleMuxHost(_) | RefreshMuxHost(_) => false,
             #[cfg(not(target_family = "wasm"))]
             ContinueConversationLocally { .. } => true,
             #[cfg(not(target_family = "wasm"))]

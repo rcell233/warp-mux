@@ -499,7 +499,7 @@ define_settings_group!(TabSettings, settings: [
     },
     use_vertical_tabs: UseVerticalTabs {
         type: bool,
-        default: false,
+        default: cfg!(target_os = "macos"),
         supported_platforms: SupportedPlatforms::ALL,
         sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
         surface: settings::SettingSurfaces::GUI,

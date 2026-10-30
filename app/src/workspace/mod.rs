@@ -13,6 +13,8 @@ pub mod header_toolbar_item;
 pub mod hoa_onboarding;
 mod home;
 mod lightbox_view;
+#[cfg(target_os = "macos")]
+pub(crate) mod mux;
 mod native_modal;
 mod one_time_modal_model;
 mod registry;

@@ -12,6 +12,8 @@ pub(crate) mod free_ai_removal_modal;
 pub mod global_search;
 pub(crate) mod launch_modal;
 pub(crate) mod left_panel;
+#[cfg(target_os = "macos")]
+mod mux;
 pub(crate) mod onboarding;
 pub(crate) mod openwarp_launch_modal;
 pub(crate) mod orchestration_launch_modal;
@@ -1197,6 +1199,8 @@ pub struct Workspace {
     left_panel_open: bool,
     vertical_tabs_panel_open: bool,
     vertical_tabs_panel: VerticalTabsPanelState,
+    #[cfg(target_os = "macos")]
+    mux_panel: mux::MuxPanelState,
     left_panel_view: ViewHandle<LeftPanelView>,
     left_panel_views: Vec<ToolPanelView>,
     right_panel_view: ViewHandle<RightPanelView>,
@@ -3544,6 +3548,8 @@ impl Workspace {
             left_panel_open: false,
             vertical_tabs_panel_open: false,
             vertical_tabs_panel: Default::default(),
+            #[cfg(target_os = "macos")]
+            mux_panel: Default::default(),
             left_panel_view,
             left_panel_views,
             right_panel_view,
@@ -3605,6 +3611,8 @@ impl Workspace {
             create_auth_secret_modal: None,
         };
 
+        #[cfg(target_os = "macos")]
+        ws.import_mux_hosts(ctx);
         ws.configure_new_workspace(workspace_setting, ctx);
         ws.sync_panel_positions_from_config(ctx);
         ws.sync_window_button_visibility(ctx);
@@ -24178,6 +24186,16 @@ impl TypedActionView for Workspace {
         }
 
         match action {
+            #[cfg(target_os = "macos")]
+            ImportMuxHosts => self.import_mux_hosts(ctx),
+            #[cfg(target_os = "macos")]
+            ToggleMuxHost(host) => self.toggle_mux_host(host, ctx),
+            #[cfg(target_os = "macos")]
+            RefreshMuxHost(host) => self.refresh_mux_host(host, ctx),
+            #[cfg(target_os = "macos")]
+            OpenMuxSsh(host) => self.open_mux_session(host, None, ctx),
+            #[cfg(target_os = "macos")]
+            OpenMuxSession { host, session } => self.open_mux_session(host, Some(session), ctx),
             ActivateTab(index) => self.activate_tab(*index, ctx),
             ActivateTabByNumber(num) => self.activate_tab(num.saturating_sub(1), ctx),
             SetTabShortcutModifierKey { key_code, pressed } => {

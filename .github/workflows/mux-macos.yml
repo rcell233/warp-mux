@@ -1,0 +1,92 @@
+name: Warp Mux macOS
+
+on:
+  push:
+    branches: [master, codex/ssh-mux-macos]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mux-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          lfs: false
+      - name: Install Rust
+        run: rustup toolchain install 1.92.0 --profile minimal --component clippy,rustfmt
+      - name: Test SSH config and session parsing
+        run: cargo test --locked --manifest-path tools/mux-tests/Cargo.toml
+      - name: Lint backend
+        run: cargo clippy --locked --manifest-path tools/mux-tests/Cargo.toml --all-targets -- -D warnings
+
+  build:
+    needs: backend-tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            arch: aarch64
+          - runner: macos-26-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 330
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_RELEASE_LTO_DEBUG: '0'
+      CARGO_PROFILE_RELEASE_LTO_LTO: 'false'
+      CARGO_PROFILE_RELEASE_LTO_CODEGEN_UNITS: '256'
+      CARGO_INCREMENTAL: '0'
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          lfs: true
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: '26'
+      - name: Install Rust
+        run: rustup toolchain install 1.92.0 --profile minimal
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: mux-macos-${{ matrix.arch }}
+          cache-on-failure: true
+      - name: Install public build dependencies
+        run: |
+          brew install protobuf create-dmg
+          ./script/macos/install_build_deps
+          ./script/install_cargo_bundle
+          ./script/install_cargo_release_deps --no-build-deps
+      - name: Build OSS app and ad-hoc signed DMG
+        id: bundle
+        run: |
+          ./script/macos/bundle --channel oss --selfsign --arch '${{ matrix.arch }}' \
+            --dmg-name-suffix "mux-${GITHUB_SHA:0:7}-${{ matrix.arch }}"
+      - name: Verify packaged app and disk image
+        env:
+          DMG_PATH: ${{ steps.bundle.outputs.dmg_path }}
+        run: |
+          test -s "$DMG_PATH"
+          hdiutil verify "$DMG_PATH"
+          codesign --verify --deep --strict --verbose=2 target/release-lto/bundle/osx/WarpOss.app
+          lipo -archs target/release-lto/bundle/osx/WarpOss.app/Contents/MacOS/warp-oss
+          shasum -a 256 "$DMG_PATH" > "$DMG_PATH.sha256"
+          printf '## Download\n\nDownload **WarpMux-macOS-${{ matrix.arch }}** under Artifacts below and unzip it to obtain the DMG.\n\nCommit: `%s`\n\nThe app is `WarpOss.app`; this is an ad-hoc signed, unnotarized test build.\n' "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: WarpMux-macOS-${{ matrix.arch }}
+          path: |
+            ${{ steps.bundle.outputs.dmg_path }}
+            ${{ steps.bundle.outputs.dmg_path }}.sha256
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
