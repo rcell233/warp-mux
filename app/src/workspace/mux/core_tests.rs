@@ -32,3 +32,11 @@ fn rejects_host_patterns_and_option_injection() {
     assert!(!valid_host("host\nother"));
     assert!(valid_host("prod-server"));
 }
+
+#[test]
+fn rejects_zmx_option_names_as_window_names() {
+    assert!(!valid_session_name("--help"));
+    assert!(!valid_session_name("--labels=key=value"));
+    assert!(!valid_session_name("bad\nname"));
+    assert!(valid_session_name("工作 api"));
+}

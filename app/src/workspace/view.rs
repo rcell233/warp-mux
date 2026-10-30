@@ -23138,6 +23138,9 @@ impl Workspace {
         }
         match item {
             HeaderToolbarItemKind::TabsPanel => {
+                if cfg!(target_os = "macos") {
+                    return None;
+                }
                 if !self.vertical_tabs_panel_open {
                     return None;
                 }
@@ -24196,6 +24199,17 @@ impl TypedActionView for Workspace {
             return;
         }
 
+        #[cfg(target_os = "macos")]
+        if self.mux_dialog_open()
+            && matches!(
+                action,
+                CloseActiveTab | ActivatePrevTab | ActivateNextTab | ActivateTabByNumber(_)
+            )
+        {
+            self.show_mux_dialog(None, ctx);
+            return;
+        }
+
         match action {
             #[cfg(target_os = "macos")]
             ImportMuxHosts => self.show_mux_dialog(Some(mux::MuxDialog::ImportHosts), ctx),
@@ -24413,12 +24427,10 @@ impl TypedActionView for Workspace {
                     self.unpin_tab_group(group_id, ctx);
                 }
             }
+            #[cfg(target_os = "macos")]
+            AddDefaultTab => self.show_mux_dialog(Some(mux::MuxDialog::NewHost), ctx),
+            #[cfg(not(target_os = "macos"))]
             AddDefaultTab => {
-                #[cfg(target_os = "macos")]
-                {
-                    self.show_mux_dialog(Some(mux::MuxDialog::NewHost), ctx);
-                    return;
-                }
                 let effective_mode = AISettings::as_ref(ctx).default_session_mode(ctx);
                 match effective_mode {
                     DefaultSessionMode::TabConfig => {

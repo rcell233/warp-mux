@@ -22,7 +22,7 @@ use warpui::{AppContext, EntityId, SingletonEntity, ViewContext, ViewHandle};
 use crate::appearance::Appearance;
 use crate::editor::{EditorView, Event as EditorEvent, SingleLineEditorOptions, TextOptions};
 use crate::pane_group::{NewTerminalOptions, PanesLayout};
-use crate::workspace::mux::core::{Session, attach_command};
+use crate::workspace::mux::core::{Session, attach_command, valid_session_name};
 use crate::workspace::mux::hosts::SavedHosts;
 use crate::workspace::mux::navigation::{HostId, Navigation, Target};
 use crate::workspace::{Workspace, WorkspaceAction, mux};
@@ -187,7 +187,7 @@ impl Workspace {
             return;
         }
         let name = self.mux_panel.window_name.trim().to_owned();
-        if name.is_empty() || name.chars().any(char::is_control) {
+        if !valid_session_name(&name) {
             return;
         }
         let Some(host) = self.mux_panel.navigation.as_ref().map(|nav| nav.selected) else {
@@ -628,7 +628,7 @@ impl Workspace {
             Container::new(row)
                 .with_padding(Padding::uniform(6.).with_left(78.))
                 .with_background(appearance.theme().surface_1())
-                .with_border(Border::bottom(1.).with_border_color(appearance.theme().outline()))
+                .with_border(Border::bottom(1.).with_border_fill(appearance.theme().outline()))
                 .finish(),
         )
         .with_height(48.)
@@ -654,7 +654,7 @@ impl Workspace {
         let discovery = state.discovery.get(&host.id);
         let mut header = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(Expanded::new(mux_text("ZMX WINDOWS", 11., true, appearance)).finish());
+            .with_child(Expanded::new(1., mux_text("ZMX WINDOWS", 11., true, appearance)).finish());
         header.add_child(self.mux_button(
             "new-window",
             button::Content::Icon(Icon::Plus),
@@ -730,7 +730,7 @@ impl Workspace {
             )
             .with_padding(Padding::uniform(8.))
             .with_background(appearance.theme().surface_1())
-            .with_border(Border::right(1.).with_border_color(appearance.theme().outline()))
+            .with_border(Border::right(1.).with_border_fill(appearance.theme().outline()))
             .finish(),
         )
         .with_width(224.)
@@ -779,13 +779,23 @@ impl Workspace {
         Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
             .with_child(sidebar)
-            .with_child(Expanded::new(terminal).finish())
+            .with_child(Expanded::new(1., terminal).finish())
             .finish()
     }
 
     pub(super) fn render_mux_dialog(&self, app: &AppContext) -> Option<Box<dyn Element>> {
         let state = &self.mux_panel;
         let dialog = state.dialog?;
+        let window_name_exists = state
+            .navigation
+            .as_ref()
+            .and_then(|nav| state.discovery.get(&nav.selected))
+            .is_some_and(|discovery| {
+                discovery
+                    .sessions
+                    .iter()
+                    .any(|session| session.name == state.window_name.trim())
+            });
         let appearance = Appearance::as_ref(app);
         let (title, subtitle) = match dialog {
             MuxDialog::NewHost => (
@@ -807,7 +817,7 @@ impl Workspace {
         };
         let mut heading = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(Expanded::new(mux_text(title, 18., true, appearance)).finish());
+            .with_child(Expanded::new(1., mux_text(title, 18., true, appearance)).finish());
         heading.add_child(self.mux_button(
             "dismiss",
             button::Content::Icon(Icon::X),
@@ -834,11 +844,13 @@ impl Workspace {
                             .finish(),
                     );
                 }
-                if state.navigation.as_ref().is_some_and(|nav| {
-                    nav.selected()
-                        .sessions
-                        .contains_key(state.window_name.trim())
-                }) {
+                if !state.window_name.is_empty() && !valid_session_name(state.window_name.trim()) {
+                    body.add_child(mux_note(
+                        "Use a name without control characters or a leading dash.",
+                        appearance,
+                    ));
+                }
+                if window_name_exists {
                     body.add_child(mux_note(
                         "A window with this name already exists.",
                         appearance,
@@ -883,7 +895,7 @@ impl Workspace {
                         Flex::row()
                             .with_cross_axis_alignment(CrossAxisAlignment::Center)
                             .with_child(
-                                Expanded::new(mux_text(alias, 13., false, appearance)).finish(),
+                                Expanded::new(1., mux_text(alias, 13., false, appearance)).finish(),
                             )
                             .with_child(self.mux_button(
                                 &format!("remove:{alias}"),
@@ -951,13 +963,7 @@ impl Workspace {
                     false,
                     appearance,
                 ));
-                let disabled = state.window_name.trim().is_empty()
-                    || state.window_name.chars().any(char::is_control)
-                    || state.navigation.as_ref().is_some_and(|nav| {
-                        nav.selected()
-                            .sessions
-                            .contains_key(state.window_name.trim())
-                    });
+                let disabled = !valid_session_name(state.window_name.trim()) || window_name_exists;
                 footer.add_child(self.mux_button(
                     "create-window",
                     button::Content::Label("Create window".into()),
@@ -1027,7 +1033,7 @@ impl Workspace {
                 .with_padding(Padding::uniform(24.))
                 .with_background(appearance.theme().surface_3())
                 .with_corner_radius(CornerRadius::with_all(Radius::Pixels(12.)))
-                .with_border(Border::all(1.).with_border_color(appearance.theme().outline()))
+                .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
                 .finish(),
         )
         .with_width(520.)

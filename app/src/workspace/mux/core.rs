@@ -11,7 +11,7 @@ pub fn parse_sessions(text: &str) -> Vec<Session> {
                 .trim_start()
                 .split('\t')
                 .find_map(|field| field.strip_prefix("name="))?;
-            if name.is_empty() || name.chars().any(char::is_control) {
+            if !valid_session_name(name) {
                 return None;
             }
             Some(Session {
@@ -36,8 +36,15 @@ pub fn valid_host(host: &str) -> bool {
             .any(|c| c.is_whitespace() || c.is_control() || "*?![]".contains(c))
 }
 
+pub fn valid_session_name(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with('-') && !name.chars().any(char::is_control)
+}
+
 pub fn attach_command(session: &Session) -> String {
-    format!("exec zmx attach {}", quote(&session.name))
+    format!(
+        "unset ZMX_SESSION; exec zmx attach {}",
+        quote(&session.name)
+    )
 }
 
 #[cfg(test)]
