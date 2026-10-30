@@ -24240,7 +24240,9 @@ impl TypedActionView for Workspace {
             #[cfg(target_os = "macos")]
             OpenMuxDirectory(path) => self.load_mux_directory(path.clone(), ctx),
             #[cfg(target_os = "macos")]
-            DownloadMuxFile(path) => self.download_mux_file(path.clone(), ctx),
+            DownloadMuxFile(path) => self.download_mux_file(path.clone(), false, ctx),
+            #[cfg(target_os = "macos")]
+            QuickDownloadMuxFile(path) => self.download_mux_file(path.clone(), true, ctx),
             #[cfg(target_os = "macos")]
             ShowMuxNewHost => self.show_mux_dialog(Some(mux::MuxDialog::NewHost), ctx),
             #[cfg(target_os = "macos")]

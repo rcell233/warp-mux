@@ -11,6 +11,8 @@ pub struct SavedHosts {
     pub aliases: Vec<String>,
     #[serde(default)]
     pub base_paths: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub last_paths: std::collections::BTreeMap<String, String>,
 }
 
 impl SavedHosts {

@@ -192,6 +192,11 @@ impl TabShortcutModifierState {
         changed
     }
 
+    pub fn is_control_held(&self) -> bool {
+        self.held_keys.contains(&KeyCode::ControlLeft)
+            || self.held_keys.contains(&KeyCode::ControlRight)
+    }
+
     fn held_kinds(&self) -> HashSet<ShortcutModifierKind> {
         self.revealed_keys
             .iter()
@@ -2094,6 +2099,19 @@ impl<'a> TabComponent<'a> {
             .finish()
         };
 
+        if self.navigation_actions.is_some() {
+            return Container::new(stack)
+                .with_vertical_padding(2.)
+                .with_background(background_color)
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_border(Border::all(1.).with_border_fill(if is_active {
+                    internal_colors::fg_overlay_2(theme).into()
+                } else {
+                    Fill::None
+                }))
+                .finish();
+        }
+
         // Grouped member: inset rounded highlight, no side dividers. It still
         // gets its own drop target so a dragged pane can land at this member's
         // slot (and the member highlights while hovered).
@@ -2184,6 +2202,7 @@ impl UiComponent for TabComponent<'_> {
         let draggable_state = self.tab.draggable_state.clone();
         let mouse_close_state = self.tab.close_mouse_state.clone();
         // Capture before `self` is moved into the Hoverable closure below.
+        let is_host_tab = self.navigation_actions.is_some();
         let for_drag_ghost = self.for_drag_ghost;
         let navigation_actions = self.navigation_actions.clone();
         let sole_grouped_member = self.sole_grouped_member;
@@ -2435,7 +2454,15 @@ impl UiComponent for TabComponent<'_> {
             let tab_with_drag: Box<dyn Element> = draggable.finish();
             SavePosition::new(tab_with_drag, &tab_position_id(tab_index)).finish()
         };
-        if FeatureFlag::NewTabStyling.is_enabled() {
+        if is_host_tab {
+            Shrinkable::new(
+                1.0,
+                Container::new(full_tab)
+                    .with_vertical_margin(3.)
+                    .with_margin_left(3.)
+                    .finish(),
+            )
+        } else if FeatureFlag::NewTabStyling.is_enabled() {
             Shrinkable::new(1.0, full_tab)
         } else {
             Shrinkable::new(

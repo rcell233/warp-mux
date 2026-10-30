@@ -52,21 +52,39 @@ content in a web view. Session lists currently refresh on host creation and manu
 session creation/removal is reflected after Refresh. Existing Warp split-pane functionality
 remains inside the selected native terminal.
 
+## Automatic SSH reconnection
+
+Managed remote zmx terminals send SSH keepalives every 15 seconds and treat three unanswered
+probes as a lost connection. A transport failure retries the same host/session with delays of
+1, 2, 4, 8, 16, then at most 30 seconds. After a sleep/network interruption, recovery stays in the
+existing tab and reattaches to the same zmx session. Closing the tab cancels the connection; Ctrl-C
+can stop the retry wait. A normal detach/logout or remote-command error does not start retries.
+
+The first connection permits interactive authentication. Retries use BatchMode, so automatic
+recovery requires an unlocked key/SSH agent or reusable authenticated connection. Password-only
+sessions may need manual authentication. Reconnection relies on the remote zmx session surviving;
+it cannot recover processes lost to a remote reboot. Apply this build by reconnecting existing
+host tabs once so their SSH clients use the new wrapper.
+
 ## File browser
 
 The folder button in the window rail, Project Explorer toolbar entry, and its shortcut open a
-floating file browser. It overlays the terminal instead of adding a docked panel. Escape, the
-close button, or clicking outside dismisses it. Other Warp tools retain their native toolbar.
+floating file browser. It overlays the terminal instead of adding a docked panel. Only Escape
+and the close button dismiss it; clicking blank space or outside the panel keeps it open. Other Warp tools retain their native toolbar.
 
-Choose **Base path** and press Go/Enter. Valid paths are remembered per SSH host (and separately
-for Local) in the saved-host registry. The browser starts at that root, includes hidden files,
+Choose **Base path** and press Go/Enter. Valid base paths and the last successfully visited directory are remembered per SSH host (and
+separately for Local) in the saved-host registry, including across app restarts. During the same
+app session, reopening a browser restores its cached listing, input, and scroll position without
+reloading. Use Refresh for remote changes. If the last directory no longer exists, Go opens the base path. The browser starts at that root, includes hidden files,
 shows folders first, and lets you navigate subdirectories or return up as far as the base path.
 Changing the input does not affect navigation until Go/Enter. Listings are capped at 2,000 entries.
 
 Use **Download** beside a file and choose a local destination in the system Save dialog. Transfers
 run independently of the terminal using OpenSSH SFTP and the host alias from SSH config. A failed
 transfer leaves an existing destination intact. The modal can close while a download continues;
-a toast reports its outcome. Directory downloads are not supported.
+a toast reports its outcome. **Ctrl-click Download** saves to the system Downloads directory
+without a picker and replaces an existing same-named file after the transfer succeeds. Ordinary
+clicks retain the Save dialog. Directory downloads are not supported.
 
 Listing requires `python3` on the selected host; remote downloads require its SFTP subsystem.
 Background SSH/SFTP authentication uses your agent or reusable ControlMaster connection, just

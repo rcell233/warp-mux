@@ -3,6 +3,7 @@ pub mod core;
 pub mod files;
 pub mod hosts;
 pub mod navigation;
+pub mod reconnect;
 
 use std::time::Duration;
 

@@ -498,9 +498,8 @@ impl Workspace {
                 let remote = mux::remote_command(&attach_command(session));
                 let command = match target.ssh_alias() {
                     Some(alias) => format!(
-                        "command /usr/bin/ssh -tt -o RemoteCommand=none -- {} {}",
-                        shell.shell_escape(alias),
-                        shell.shell_escape(&remote)
+                        "command /bin/sh -c {}",
+                        shell.shell_escape(&mux::reconnect::ssh_session_script(alias, session))
                     ),
                     None => format!("command /bin/sh -c {}", shell.shell_escape(&remote)),
                 };

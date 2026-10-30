@@ -76,3 +76,15 @@ fn completed_download_replaces_destination_with_exact_bytes() {
             assert_eq!(std::fs::read(destination).unwrap(), bytes);
         });
 }
+
+#[test]
+fn quick_download_uses_literal_basename_and_rejects_path_traversal() {
+    let directory = Path::new("/Users/test/Downloads");
+    assert_eq!(
+        download_destination(directory, "report '雪'.txt").unwrap(),
+        directory.join("report '雪'.txt")
+    );
+    assert!(download_destination(directory, "../outside").is_err());
+    assert!(download_destination(directory, "/absolute").is_err());
+    assert!(download_destination(directory, "..").is_err());
+}

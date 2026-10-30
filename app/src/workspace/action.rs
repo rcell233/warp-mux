@@ -138,6 +138,8 @@ pub enum WorkspaceAction {
     #[cfg(target_os = "macos")]
     DownloadMuxFile(String),
     #[cfg(target_os = "macos")]
+    QuickDownloadMuxFile(String),
+    #[cfg(target_os = "macos")]
     ShowMuxNewHost,
     #[cfg(target_os = "macos")]
     ShowMuxNewWindow,
@@ -977,6 +979,7 @@ impl WorkspaceAction {
             | ApplyMuxBasePath
             | OpenMuxDirectory(_)
             | DownloadMuxFile(_)
+            | QuickDownloadMuxFile(_)
             | ShowMuxNewHost
             | ShowMuxNewWindow
             | ShowMuxManageHosts

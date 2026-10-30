@@ -1,4 +1,4 @@
-use warpui::elements::Percentage;
+use warpui::elements::{DispatchEventResult, EventHandler, Percentage};
 use warpui::platform::SaveFilePickerConfiguration;
 
 use super::*;
@@ -6,17 +6,39 @@ use crate::view_components::DismissibleToast;
 use crate::workspace::mux::files::{self, Listing};
 
 #[derive(Default)]
-pub(super) struct FileBrowser {
-    target: Option<Target>,
-    editor: Option<ViewHandle<EditorView>>,
+struct BrowserState {
     base: String,
     listing: Option<Listing>,
     loading: bool,
-    downloading: bool,
-    choosing_destination: bool,
     error: Option<String>,
     generation: u64,
     scroll: ClippedScrollStateHandle,
+}
+
+#[derive(Default)]
+pub(super) struct FileBrowser {
+    target: Option<Target>,
+    editor: Option<ViewHandle<EditorView>>,
+    states: HashMap<String, BrowserState>,
+    downloading: bool,
+    choosing_destination: bool,
+}
+
+impl FileBrowser {
+    fn key(&self) -> String {
+        self.target
+            .as_ref()
+            .and_then(Target::ssh_alias)
+            .unwrap_or("")
+            .to_owned()
+    }
+    fn state(&self) -> &BrowserState {
+        &self.states[&self.key()]
+    }
+    fn state_mut(&mut self) -> &mut BrowserState {
+        let key = self.key();
+        self.states.entry(key).or_default()
+    }
 }
 
 impl Workspace {
@@ -36,7 +58,10 @@ impl Workspace {
         });
         ctx.subscribe_to_view(&editor, |workspace, editor, event, ctx| match event {
             EditorEvent::Edited(_) => {
-                workspace.mux_panel.files.base = editor.as_ref(ctx).buffer_text(ctx);
+                if workspace.mux_panel.files.target.is_some() {
+                    workspace.mux_panel.files.state_mut().base =
+                        editor.as_ref(ctx).buffer_text(ctx);
+                }
                 ctx.notify();
             }
             EditorEvent::Enter => workspace.apply_mux_base_path(ctx),
@@ -55,21 +80,35 @@ impl Workspace {
         else {
             return;
         };
-        let key = target.ssh_alias().unwrap_or("");
-        let base = SavedHosts::load(&registry_path())
-            .ok()
-            .and_then(|saved| saved.base_paths.get(key).cloned())
-            .unwrap_or_else(|| "~".into());
+        let key = target.ssh_alias().unwrap_or("").to_owned();
         let files = &mut self.mux_panel.files;
+        let first_open = !files.states.contains_key(&key);
+        let mut restore_path = String::new();
+        if first_open {
+            let saved = SavedHosts::load(&registry_path()).unwrap_or_default();
+            let base = saved
+                .base_paths
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| "~".into());
+            restore_path = saved.last_paths.get(&key).cloned().unwrap_or_default();
+            files.states.insert(
+                key.clone(),
+                BrowserState {
+                    base,
+                    ..Default::default()
+                },
+            );
+        }
         files.target = Some(target);
-        files.base = base.clone();
-        files.listing = None;
-        files.error = None;
+        let base = files.state().base.clone();
         if let Some(editor) = files.editor.clone() {
             editor.update(ctx, |view, ctx| view.set_buffer_text(&base, ctx));
         }
         self.show_mux_dialog(Some(MuxDialog::Files), ctx);
-        self.load_mux_directory(String::new(), ctx);
+        if first_open {
+            self.load_mux_directory(restore_path, ctx);
+        }
     }
 
     pub(in crate::workspace::view) fn apply_mux_base_path(&mut self, ctx: &mut ViewContext<Self>) {
@@ -90,42 +129,47 @@ impl Workspace {
         let Some(target) = files.target.clone() else {
             return;
         };
-        // Navigation uses the committed base; editing the field takes effect only on Go/Enter.
+        let key = files.key();
+        let state = files.state_mut();
+        // Edits take effect on Go/Enter; navigation uses the last successful base.
         let base = if path.is_empty() {
-            files.base.clone()
+            state.base.clone()
         } else {
-            files
+            state
                 .listing
                 .as_ref()
                 .map(|list| list.base.clone())
-                .unwrap_or_else(|| files.base.clone())
+                .unwrap_or_else(|| state.base.clone())
         };
-        files.generation += 1;
-        let generation = files.generation;
-        files.loading = true;
-        files.error = None;
-        let key = target.ssh_alias().unwrap_or("").to_owned();
+        state.generation += 1;
+        let generation = state.generation;
+        state.loading = true;
+        state.error = None;
         ctx.spawn(
             async move { files::list(target.ssh_alias(), &base, &path).await },
             move |workspace, result, ctx| {
                 let files = &mut workspace.mux_panel.files;
-                if files.generation != generation {
+                let state = files.states.entry(key.clone()).or_default();
+                if state.generation != generation {
                     return;
                 }
-                files.loading = false;
+                state.loading = false;
                 match result {
                     Ok(listing) => {
                         let save_result = (|| -> anyhow::Result<()> {
                             let mut saved = SavedHosts::load(&registry_path())?;
-                            saved.base_paths.insert(key, listing.base.clone());
+                            saved.base_paths.insert(key.clone(), listing.base.clone());
+                            saved.last_paths.insert(key, listing.path.clone());
                             saved.save(&registry_path())
                         })();
-                        files.error = save_result
+                        state.error = save_result
                             .err()
-                            .map(|error| format!("Could not remember base path: {error:#}"));
-                        files.listing = Some(listing);
+                            .map(|error| format!("Could not remember location: {error:#}"));
+                        state.listing = Some(listing);
                     }
-                    Err(error) => files.error = Some(format!("{error:#}")),
+                    Err(error) => {
+                        state.error = Some(format!("{error:#}. Use Go to return to the base path."))
+                    }
                 }
                 ctx.notify();
             },
@@ -136,6 +180,7 @@ impl Workspace {
     pub(in crate::workspace::view) fn download_mux_file(
         &mut self,
         source: String,
+        direct: bool,
         ctx: &mut ViewContext<Self>,
     ) {
         let files = &self.mux_panel.files;
@@ -145,7 +190,7 @@ impl Workspace {
         let Some(target) = files.target.clone() else {
             return;
         };
-        let Some(entry) = files.listing.as_ref().and_then(|listing| {
+        let Some(entry) = files.state().listing.as_ref().and_then(|listing| {
             listing
                 .entries
                 .iter()
@@ -153,6 +198,22 @@ impl Workspace {
         }) else {
             return;
         };
+        if direct {
+            match dirs::download_dir()
+                .and_then(|directory| files::download_destination(&directory, &entry.name).ok())
+            {
+                Some(destination) => self.start_mux_download(target, source, destination, ctx),
+                None => self.toast_stack.update(ctx, |view, ctx| {
+                    view.add_ephemeral_toast(
+                        DismissibleToast::error(
+                            "Could not resolve the Downloads directory or file name.".into(),
+                        ),
+                        ctx,
+                    )
+                }),
+            }
+            return;
+        }
         let mut config =
             SaveFilePickerConfiguration::new().with_default_filename(entry.name.clone());
         if let Some(directory) = dirs::download_dir() {
@@ -166,28 +227,71 @@ impl Workspace {
                     ctx.notify();
                     return;
                 };
-                workspace.mux_panel.files.downloading = true;
-                let source = source.clone();
-                let target = target.clone();
-                let destination = PathBuf::from(&path);
-                ctx.spawn(
-                    async move { files::download(target.ssh_alias(), &source, &destination).await },
-                    move |workspace, result, ctx| {
-                        workspace.mux_panel.files.downloading = false;
-                        let toast = match result {
-                            Ok(()) => DismissibleToast::success(format!("Downloaded to {path}")),
-                            Err(error) => DismissibleToast::error(format!("{error:#}")),
-                        };
-                        workspace
-                            .toast_stack
-                            .update(ctx, |view, ctx| view.add_ephemeral_toast(toast, ctx));
-                        ctx.notify();
-                    },
-                );
-                ctx.notify();
+                workspace.start_mux_download(target, source, PathBuf::from(path), ctx);
             },
             config,
         );
+    }
+
+    fn start_mux_download(
+        &mut self,
+        target: Target,
+        source: String,
+        destination: PathBuf,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.mux_panel.files.downloading = true;
+        let label = destination.display().to_string();
+        ctx.spawn(
+            async move {
+                if let Some(parent) = destination.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                files::download(target.ssh_alias(), &source, &destination).await
+            },
+            move |workspace, result, ctx| {
+                workspace.mux_panel.files.downloading = false;
+                let toast = match result {
+                    Ok(()) => DismissibleToast::success(format!("Downloaded to {label}")),
+                    Err(error) => DismissibleToast::error(format!("{error:#}")),
+                };
+                workspace
+                    .toast_stack
+                    .update(ctx, |view, ctx| view.add_ephemeral_toast(toast, ctx));
+                ctx.notify();
+            },
+        );
+        ctx.notify();
+    }
+
+    fn mux_download_button(
+        &self,
+        source: &str,
+        disabled: bool,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        let button = self.mux_button(
+            &format!("download:{source}"),
+            button::Content::IconAndLabel(Icon::Download, "Download".into()),
+            WorkspaceAction::DownloadMuxFile(source.to_owned()),
+            false,
+            disabled,
+            appearance,
+        );
+        let source = source.to_owned();
+        EventHandler::new(button)
+            .on_right_mouse_down(move |ctx, app, _, _| {
+                if !disabled && crate::tab::TabShortcutModifierState::as_ref(app).is_control_held()
+                {
+                    ctx.dispatch_typed_action(WorkspaceAction::QuickDownloadMuxFile(
+                        source.clone(),
+                    ));
+                    DispatchEventResult::StopPropagation
+                } else {
+                    DispatchEventResult::PropagateToParent
+                }
+            })
+            .finish()
     }
 
     pub(in crate::workspace::view) fn render_mux_files(
@@ -196,6 +300,7 @@ impl Workspace {
     ) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
         let files = &self.mux_panel.files;
+        let state = files.state();
         let title = format!(
             "Files · {}",
             files.target.as_ref().map(Target::label).unwrap_or("Local")
@@ -238,7 +343,7 @@ impl Workspace {
             button::Content::Label("Go".into()),
             WorkspaceAction::ApplyMuxBasePath,
             false,
-            files.loading,
+            state.loading,
             appearance,
         ));
         let mut column = Flex::column()
@@ -248,7 +353,7 @@ impl Workspace {
             .with_child(heading)
             .with_child(base.finish());
         let mut rows = Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Stretch);
-        if let Some(listing) = &files.listing {
+        if let Some(listing) = &state.listing {
             let mut navigation = Flex::row()
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_spacing(8.);
@@ -257,7 +362,7 @@ impl Workspace {
                 button::Content::Label("↑".into()),
                 WorkspaceAction::OpenMuxDirectory(listing.parent.clone().unwrap_or_default()),
                 false,
-                files.loading || listing.parent.is_none(),
+                state.loading || listing.parent.is_none(),
                 appearance,
             ));
             navigation.add_child(
@@ -279,7 +384,7 @@ impl Workspace {
                 button::Content::Icon(Icon::Refresh),
                 WorkspaceAction::OpenMuxDirectory(listing.path.clone()),
                 false,
-                files.loading,
+                state.loading,
                 appearance,
             ));
             column.add_child(navigation.finish());
@@ -313,12 +418,9 @@ impl Workspace {
                                 .finish(),
                             )
                             .with_child(mux_note(&format!("{} B", entry.size), appearance))
-                            .with_child(self.mux_button(
-                                &format!("download:{}", entry.path),
-                                button::Content::IconAndLabel(Icon::Download, "Download".into()),
-                                WorkspaceAction::DownloadMuxFile(entry.path.clone()),
-                                false,
-                                files.downloading || files.choosing_destination || files.loading,
+                            .with_child(self.mux_download_button(
+                                &entry.path,
+                                files.downloading || files.choosing_destination || state.loading,
                                 appearance,
                             ))
                             .finish(),
@@ -335,23 +437,27 @@ impl Workspace {
                 ));
             }
         }
-        if files.loading {
+        if state.loading {
             column.add_child(mux_note("Loading files…", appearance));
         }
+        column.add_child(mux_note(
+            "Ctrl-click Download to save directly to Downloads and replace a same-named file.",
+            appearance,
+        ));
         if files.downloading {
             column.add_child(mux_note(
                 "Downloading… You can close this window while the transfer continues.",
                 appearance,
             ));
         }
-        if let Some(error) = &files.error {
+        if let Some(error) = &state.error {
             column.add_child(mux_note(error, appearance));
         }
         column.add_child(
             Shrinkable::new(
                 1.,
                 ClippedScrollable::vertical(
-                    files.scroll.clone(),
+                    state.scroll.clone(),
                     rows.finish(),
                     ScrollbarWidth::Custom(4.),
                     appearance.theme().nonactive_ui_detail().into(),
@@ -379,7 +485,7 @@ impl Workspace {
                 .finish(),
         )
         .prevent_interaction_with_other_elements()
-        .on_dismiss(|ctx, _| ctx.dispatch_typed_action(WorkspaceAction::DismissMuxDialog))
+        .on_dismiss(|_, _| {})
         .finish()
     }
 }

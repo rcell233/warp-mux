@@ -48,3 +48,20 @@ fn base_paths_migrate_and_survive_saved_host_changes() {
         "/srv/projects"
     );
 }
+
+#[test]
+fn browser_location_survives_restart_and_is_isolated_by_host() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("hosts.json");
+    let mut saved = SavedHosts::default();
+    saved
+        .last_paths
+        .insert("prod".into(), "/srv/projects/api".into());
+    saved
+        .last_paths
+        .insert("dev".into(), "/home/dev/code".into());
+    saved.save(&path).unwrap();
+    let restored = SavedHosts::load(&path).unwrap();
+    assert_eq!(restored.last_paths["prod"], "/srv/projects/api");
+    assert_eq!(restored.last_paths["dev"], "/home/dev/code");
+}

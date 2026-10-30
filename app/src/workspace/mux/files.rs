@@ -92,6 +92,18 @@ fn sftp_path(path: &str) -> Result<String> {
     Ok(escaped)
 }
 
+pub fn download_destination(directory: &Path, name: &str) -> Result<std::path::PathBuf> {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.chars().any(char::is_control)
+    {
+        bail!("Invalid download filename");
+    }
+    Ok(directory.join(name))
+}
+
 pub async fn download(host: Option<&str>, source: &str, destination: &Path) -> Result<()> {
     let parent = destination.parent().context("Missing download directory")?;
     let staged = tempfile::NamedTempFile::new_in(parent)?;
