@@ -79,7 +79,7 @@ its client; there is no kill-session operation. The remote multiplexer controls 
 cargo test --locked --manifest-path tools/mux-tests/Cargo.toml
 cargo clippy --locked --manifest-path tools/mux-tests/Cargo.toml --all-targets -- -D warnings
 ./script/run
-./script/macos/bundle --channel oss --selfsign --arch aarch64
+./script/macos/bundle --channel oss --profile mux --selfsign --arch aarch64
 ```
 
 The small test harness imports production parser modules directly, avoiding a GUI/GPU link for

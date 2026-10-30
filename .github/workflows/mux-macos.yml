@@ -42,9 +42,6 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       CARGO_BUILD_JOBS: '2'
-      CARGO_PROFILE_RELEASE_LTO_DEBUG: '0'
-      CARGO_PROFILE_RELEASE_LTO_LTO: 'false'
-      CARGO_PROFILE_RELEASE_LTO_CODEGEN_UNITS: '256'
       CARGO_INCREMENTAL: '0'
       HOMEBREW_NO_AUTO_UPDATE: '1'
     steps:
@@ -69,7 +66,7 @@ jobs:
       - name: Build OSS app and ad-hoc signed DMG
         id: bundle
         run: |
-          ./script/macos/bundle --channel oss --selfsign --arch '${{ matrix.arch }}' \
+          ./script/macos/bundle --channel oss --profile mux --selfsign --arch '${{ matrix.arch }}' \
             --dmg-name-suffix "mux-${GITHUB_SHA:0:7}-${{ matrix.arch }}"
       - name: Verify packaged app and disk image
         env:
@@ -77,8 +74,8 @@ jobs:
         run: |
           test -s "$DMG_PATH"
           hdiutil verify "$DMG_PATH"
-          codesign --verify --deep --strict --verbose=2 target/release-lto/bundle/osx/WarpOss.app
-          lipo -archs target/release-lto/bundle/osx/WarpOss.app/Contents/MacOS/warp-oss
+          codesign --verify --deep --strict --verbose=2 target/mux/bundle/osx/WarpOss.app
+          lipo -archs target/mux/bundle/osx/WarpOss.app/Contents/MacOS/warp-oss
           shasum -a 256 "$DMG_PATH" > "$DMG_PATH.sha256"
           printf '## Download\n\nDownload **WarpMux-macOS-${{ matrix.arch }}** under Artifacts below and unzip it to obtain the DMG.\n\nCommit: `%s`\n\nThe app is `WarpOss.app`; this is an ad-hoc signed, unnotarized test build.\n' "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
