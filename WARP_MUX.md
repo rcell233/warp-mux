@@ -1,95 +1,84 @@
-# Warp Mux — macOS test build
+# Warp Mux — zmx workspaces
 
-This fork adds an SSH host and zmx/tmux session browser to Warp's native vertical tab bar.
-The app is currently packaged as **WarpOss.app** (bundle ID `dev.warp.WarpOss`) and can coexist
-with the official Warp app. Existing Warp OSS installations share its preferences and app data.
+The macOS fork uses two simultaneous navigation levels:
 
-## Download a test build
+| Surface | Contents | Selection behavior |
+| --- | --- | --- |
+| Top host strip | Local workspace and open SSH hosts | Restores that host's last selected terminal |
+| Left window rail | Only the selected host's zmx sessions | Opens or selects its native Warp terminal |
+| Main area | Selected terminal, connection/loading state, or actionable error | No persistent host directory |
 
-Open [Warp Mux macOS Actions](https://github.com/rcell233/warp-mux/actions/workflows/mux-macos.yml),
-select a successful run, then download an artifact at the bottom of the run:
+## Connection flow
+
+Click **New host** (or Cmd+T) to open the connection chooser. Choose **Local terminal** or one
+of your saved SSH hosts. The chooser closes when the host tab opens. Opening the same host again
+selects its existing host tab. Host tabs and zmx windows are separate navigation levels;
+horizontal and vertical tab layouts are no longer alternatives in this fork.
+
+A remote host is discovered in the background; its first zmx window is selected when available.
+Switching windows preserves the local SSH clients and uses Warp's native terminal renderer.
+Use **+** in the window rail to create a named persistent zmx window, and Refresh to discover external changes. Same-named windows on different hosts are
+independent. Closing a host tab disconnects its local clients; it never kills remote zmx sessions.
+
+## Saved host management
+
+From **New host → Manage SSH hosts**, choose **Add from SSH config**. Only this screen reads and
+shows all concrete aliases in `~/.ssh/config` and ordinary Include files/globs. Select individual
+aliases and click **Add hosts**. Already-added aliases are marked and cannot be selected twice.
+
+The saved list is maintained separately at `mux/hosts.json` in Warp OSS's application data
+directory. Add/remove changes are persisted atomically. Removing an entry does not modify SSH
+config, disconnect an open host, or cause it to be automatically imported again. Opening the
+chooser reloads the saved list so changes made in another window are visible. No credentials
+or private-key contents are copied into the registry.
+
+Host management, saved-host selection, and SSH config candidates appear only in these transient
+screens. They are never permanent panels in the terminal workspace. Cancel, Escape, the close
+button, or clicking outside dismisses the chooser without creating a host connection.
+
+## SSH and zmx
+
+Only **zmx** is supported by this feature. Local discovery is also supported. SSH hosts require a
+POSIX `sh` and zmx on PATH (`~/.local/bin`, `~/bin`, `/opt/homebrew/bin`, and `/usr/local/bin` are
+included). SSH itself resolves User, Port, ProxyJump, identities, and other config options.
+
+Discovery is noninteractive with a 20-second timeout. If a host key or credentials require
+interaction, use **Open SSH terminal**, authenticate, then Refresh. Background discovery needs
+an agent/unlocked identity or a reusable SSH ControlMaster; an interactive password login alone
+does not cache credentials for subsequent processes. Host-key verification is never disabled.
+
+The UI calls zmx sessions “windows.” It does not invent a second multiplexer or emulate terminal
+content in a web view. Session lists currently refresh on host creation and manually; external
+session creation/removal is reflected after Refresh. Existing Warp split-pane functionality
+remains inside the selected native terminal.
+
+## Download
+
+[Warp Mux macOS Actions](https://github.com/rcell233/warp-mux/actions/workflows/mux-macos.yml)
+builds architecture-specific artifacts:
 
 | Artifact | Mac |
 | --- | --- |
-| WarpMux-macOS-aarch64 | Apple Silicon (M series) |
+| WarpMux-macOS-aarch64 | Apple Silicon |
 | WarpMux-macOS-x86_64 | Intel |
 
-Unzip the artifact, open the DMG, and drag WarpOss into Applications. The accompanying `.sha256`
-file identifies the image checksum. Artifacts are retained for 14 days. These are test builds
-signed ad-hoc, without Apple notarization; macOS may require allowing the app in
-System Settings → Privacy & Security after attempting to open it.
+Download an artifact from a successful run and unzip to obtain the DMG and SHA-256 checksum.
+Install **WarpOss.app** alongside official Warp. The package is signed ad-hoc, without Apple
+notarization; macOS may require allowing it in Privacy & Security. Artifacts remain available
+for 14 days. No Apple credentials or Warp internal build services are required.
 
-The workflow runs on pushes to `master` and `codex/ssh-mux-macos`. After it is merged into the
-default branch it can also be started from **Run workflow**. If GitHub has disabled Actions for
-the fork, open the Actions tab and enable workflows first. No Warp internal services, Apple
-certificates, or repository secrets are needed. First builds may take several hours; later
-builds reuse a Rust dependency cache. Outputs are Actions artifacts, not GitHub Releases.
-
-## Use
-
-1. Configure aliases in `~/.ssh/config`, for example:
-
-   ```sshconfig
-   Host dev
-       HostName example.com
-       User me
-       IdentityFile ~/.ssh/id_ed25519
-   ```
-
-2. Open WarpOss. Vertical tabs default on for new macOS preferences. If an existing preference
-   keeps horizontal tabs, enable vertical tabs in Settings → Appearance.
-3. Click **Import / reload ~/.ssh/config**. Import lists concrete `Host` aliases, including
-   ordinary `Include` files/globs. Wildcards and negated host patterns are not offered as hosts.
-   Add or remove aliases by editing SSH config and importing again; no SSH config is rewritten.
-4. Expand a host to discover remote zmx and tmux sessions. If discovery cannot authenticate or
-   the host key is unknown, click **Open SSH (authenticate)**, finish authentication, then refresh.
-   Password authentication requires an SSH agent or a reusable ControlMaster for background
-   discovery; an interactive login alone does not cache passwords for later SSH processes.
-5. Click a session to attach in a real Warp terminal tab. Click it again to select the existing
-   tab in that window. **Refresh sessions** discovers changes on the host.
-
-Open tabs use Warp's existing switching, resizing, renaming, and closing behavior. Discovery
-is lazy: listing a host does not open a connection to every session. Closing a tab disconnects
-its client; there is no kill-session operation. The remote multiplexer controls persistence.
-
-## Current limits
-
-- macOS integration only. Remote hosts need a POSIX `sh` and zmx and/or tmux already installed.
-- One remote **session** maps to one native Warp tab. tmux windows/panes remain inside tmux.
-  Different tmux clients attached to the same session normally share the current window.
-- Import enumerates SSH config aliases; OpenSSH itself resolves `User`, `Port`, `ProxyJump`,
-  identities, and connection options. Conditional `Match` includes are skipped during import
-  (except `Match all`); `Match exec` is not executed by the importer. Other conditional
-  `Host` includes may offer aliases unavailable for a particular destination.
-- Background discovery is noninteractive, has a 20-second timeout per backend, and never
-  disables host-key verification. Host commands are only invoked when you expand or refresh.
-- Remote tool lookup adds `~/.local/bin`, `~/bin`, `/opt/homebrew/bin`, and `/usr/local/bin` to
-  the login shell PATH. Custom multiplexer socket paths and executable paths have no UI yet.
-- Session labels reject terminal control characters. Names and SSH destinations are escaped
-  independently for local and remote shells. tmux targets use stable session IDs.
-- Session lists refresh manually; no live remote event subscription. Native-tab deduplication
-  is scoped to the current window/lifetime. Restored or moved tabs are not rediscovered as
-  existing connections. If SSH exits, close that tab and select the session again to reconnect.
-- Local zmx/tmux browsing, creating/renaming/killing sessions, favorites, and per-window tmux
-  mappings are not implemented in this first version.
-
-## Development and checks
+## Validation
 
 ```sh
 cargo test --locked --manifest-path tools/mux-tests/Cargo.toml
 cargo clippy --locked --manifest-path tools/mux-tests/Cargo.toml --all-targets -- -D warnings
-./script/run
+./script/macos/bundle --channel oss --profile mux --arch aarch64 --check-only
 ./script/macos/bundle --channel oss --profile mux --selfsign --arch aarch64
 ```
 
-The small test harness imports production parser modules directly, avoiding a GUI/GPU link for
-parser tests. The Actions builds compile the full GUI for both architectures, verify code
-signatures and DMG integrity, then upload the image. They do not exercise SSH against your
-hosts or prove the UI works on a physical Mac. Manual test checklist:
-
-- Import aliases with `Include` globs; unknown host keys show an actionable discovery error.
-- Authenticate with Open SSH, then list hosts with zmx only, tmux only, neither, and no sessions.
-- Attach two sessions, switch repeatedly without extra tabs, close and reopen one session.
-- Rename a native tab, refresh, and select its session again.
-- Close Warp, reconnect from a new window, and confirm the remote job is still running.
-- Exercise names with spaces, Unicode, quotes, and shell metacharacters.
+The production backend is tested independently of the GPU stack. Tests cover registry
+persistence/removal, malformed-file handling, host/window selection isolation, config Includes,
+zmx output, and shell escaping. CI checks the complete GUI, builds DMGs, then verifies disk-image
+integrity and app signatures. Real SSH authentication and mouse/keyboard behavior still require
+Mac testing. Open host/window grouping currently lasts for the window lifetime; Warp's native
+snapshot restore does not yet restore this grouping. Saved SSH hosts persist across restarts.

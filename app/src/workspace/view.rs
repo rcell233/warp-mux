@@ -3611,9 +3611,9 @@ impl Workspace {
             create_auth_secret_modal: None,
         };
 
-        #[cfg(target_os = "macos")]
-        ws.import_mux_hosts(ctx);
         ws.configure_new_workspace(workspace_setting, ctx);
+        #[cfg(target_os = "macos")]
+        ws.initialize_mux(ctx);
         ws.sync_panel_positions_from_config(ctx);
         ws.sync_window_button_visibility(ctx);
         ws.update_titlebar_height(ctx);
@@ -5611,6 +5611,10 @@ impl Workspace {
         };
 
         self.active_tab_index = index;
+        #[cfg(target_os = "macos")]
+        if let Some(native) = self.tabs.get(index).map(|tab| tab.pane_group.id()) {
+            self.observe_mux_native_tab(native);
+        }
 
         // The range selection's anchor is the active tab, so any change to
         // the active tab makes the existing selection stale; clear it.
@@ -12350,6 +12354,8 @@ impl Workspace {
         }
 
         let tab_data = self.tabs.remove(index);
+        #[cfg(target_os = "macos")]
+        self.forget_mux_native_tab(tab_data.pane_group.id());
 
         let removed_pane_group_id = tab_data.pane_group.id();
         self.tab_mru_order.retain(|id| *id != removed_pane_group_id);
@@ -13161,6 +13167,8 @@ impl Workspace {
             self.new_tab_index_and_group(ctx)
         };
         self.tabs.insert(insert_idx, TabData::new(new_pane_group));
+        #[cfg(target_os = "macos")]
+        self.register_mux_native_tab(self.tabs[insert_idx].pane_group.id());
         self.tab_mru_order
             .push(self.tabs[insert_idx].pane_group.id());
         self.activate_tab_internal(insert_idx, ctx);
@@ -14558,6 +14566,9 @@ impl Workspace {
 
     /// How to render the tab bar.
     fn tab_bar_mode(&self, app: &AppContext) -> ShowTabBar {
+        if cfg!(target_os = "macos") {
+            return ShowTabBar::Stacked;
+        }
         // Drag-preview windows always show the tab bar inline; the user
         // is literally holding the tab they detached, so it must remain
         // visible regardless of the user's hover/fullscreen settings.
@@ -24187,25 +24198,60 @@ impl TypedActionView for Workspace {
 
         match action {
             #[cfg(target_os = "macos")]
-            ImportMuxHosts => self.import_mux_hosts(ctx),
+            ImportMuxHosts => self.show_mux_dialog(Some(mux::MuxDialog::ImportHosts), ctx),
             #[cfg(target_os = "macos")]
-            ToggleMuxHost(host) => self.toggle_mux_host(host, ctx),
+            ShowMuxNewHost => self.show_mux_dialog(Some(mux::MuxDialog::NewHost), ctx),
             #[cfg(target_os = "macos")]
-            RefreshMuxHost(host) => self.refresh_mux_host(host, ctx),
+            ShowMuxNewWindow => self.show_mux_dialog(Some(mux::MuxDialog::NewWindow), ctx),
             #[cfg(target_os = "macos")]
-            OpenMuxSsh(host) => self.open_mux_session(host, None, ctx),
+            CreateMuxWindow => self.create_mux_window(ctx),
             #[cfg(target_os = "macos")]
-            OpenMuxSession { host, session } => self.open_mux_session(host, Some(session), ctx),
+            ShowMuxManageHosts => self.show_mux_dialog(Some(mux::MuxDialog::ManageHosts), ctx),
+            #[cfg(target_os = "macos")]
+            DismissMuxDialog => self.show_mux_dialog(None, ctx),
+            #[cfg(target_os = "macos")]
+            SaveMuxSelectedHosts => self.save_mux_hosts(None, ctx),
+            #[cfg(target_os = "macos")]
+            ToggleMuxCandidate(alias) => self.toggle_mux_candidate(alias, ctx),
+            #[cfg(target_os = "macos")]
+            RemoveMuxSavedHost(alias) => self.save_mux_hosts(Some(alias), ctx),
+            #[cfg(target_os = "macos")]
+            CreateMuxHost(alias) => self.create_mux_host(alias.as_deref(), ctx),
+            #[cfg(target_os = "macos")]
+            ActivateMuxHost(host) => self.activate_mux_host(*host, ctx),
+            #[cfg(target_os = "macos")]
+            CloseMuxHost(host) => self.close_mux_host(*host, ctx),
+            #[cfg(target_os = "macos")]
+            RefreshMuxHost(host) => self.refresh_mux_host(*host, ctx),
+            #[cfg(target_os = "macos")]
+            AuthenticateMuxHost(host) => self.authenticate_mux_host(*host, ctx),
+            #[cfg(target_os = "macos")]
+            OpenMuxSession { host, session } => self.open_mux_session(*host, session, ctx),
             ActivateTab(index) => self.activate_tab(*index, ctx),
-            ActivateTabByNumber(num) => self.activate_tab(num.saturating_sub(1), ctx),
+            ActivateTabByNumber(num) => {
+                #[cfg(target_os = "macos")]
+                self.select_mux_host_number(*num, ctx);
+                #[cfg(not(target_os = "macos"))]
+                self.activate_tab(num.saturating_sub(1), ctx);
+            }
             SetTabShortcutModifierKey { key_code, pressed } => {
                 TabShortcutModifierState::handle(ctx).update(ctx, |state, ctx| {
                     state.set_key_held(*key_code, *pressed, ctx);
                 });
             }
-            ActivatePrevTab => self.activate_prev_tab(ctx),
+            ActivatePrevTab => {
+                #[cfg(target_os = "macos")]
+                self.cycle_mux_host(false, ctx);
+                #[cfg(not(target_os = "macos"))]
+                self.activate_prev_tab(ctx);
+            }
             OpenLaunchConfigSaveModal => self.open_launch_config_save_modal(ctx),
-            ActivateNextTab => self.activate_next_tab(ctx),
+            ActivateNextTab => {
+                #[cfg(target_os = "macos")]
+                self.cycle_mux_host(true, ctx);
+                #[cfg(not(target_os = "macos"))]
+                self.activate_next_tab(ctx);
+            }
             ActivateLastTab => self.activate_last_tab(ctx),
             CyclePrevSession => self.cycle_prev_session(ctx),
             CycleNextSession => self.cycle_next_session(ctx),
@@ -24291,7 +24337,12 @@ impl TypedActionView for Workspace {
             ToggleBlockSnackbar => self.toggle_block_snackbar(ctx),
             ToggleWelcomeTips => self.toggle_welcome_tips_visiblity(ctx),
             CloseTab(index) => self.close_tab(*index, false, true, ctx),
-            CloseActiveTab => self.close_tab(self.active_tab_index, false, true, ctx),
+            CloseActiveTab => {
+                #[cfg(target_os = "macos")]
+                self.close_selected_mux_host(ctx);
+                #[cfg(not(target_os = "macos"))]
+                self.close_tab(self.active_tab_index, false, true, ctx);
+            }
             CloseOtherTabs(index) => self.close_other_tabs(*index, false, ctx),
             CloseNonActiveTabs => self.close_other_tabs(self.active_tab_index, false, ctx),
             CloseTabsRight(index) => {
@@ -24363,6 +24414,11 @@ impl TypedActionView for Workspace {
                 }
             }
             AddDefaultTab => {
+                #[cfg(target_os = "macos")]
+                {
+                    self.show_mux_dialog(Some(mux::MuxDialog::NewHost), ctx);
+                    return;
+                }
                 let effective_mode = AISettings::as_ref(ctx).default_session_mode(ctx);
                 match effective_mode {
                     DefaultSessionMode::TabConfig => {
@@ -26728,6 +26784,10 @@ impl View for Workspace {
 
     fn keymap_context(&self, app: &AppContext) -> warpui::keymap::Context {
         let mut context = Self::default_keymap_context();
+        #[cfg(target_os = "macos")]
+        if self.mux_dialog_open() {
+            context.set.insert("MuxDialogOpen");
+        }
 
         if NetworkStatus::as_ref(app).is_online() {
             context.set.insert("IsOnline");
@@ -26979,9 +27039,14 @@ impl View for Workspace {
             // does not affect the tab.
             let mut outer_column = Flex::column();
             if tab_bar_mode == ShowTabBar::Stacked {
+                #[cfg(not(target_os = "macos"))]
                 outer_column.add_child(self.render_tab_bar(self.tab_fixed_width, appearance, app));
+                #[cfg(target_os = "macos")]
+                outer_column.add_child(self.render_mux_host_bar(app));
             }
             let content = self.render_banner_and_active_tab(app, appearance);
+            #[cfg(target_os = "macos")]
+            let content = self.render_mux_layout(content, app);
             // Hide the vertical tab rail for simplified WASM views (notebooks, shared sessions, etc.)
             let panels_row = self.render_panels(app, Shrinkable::new(1.0, content).finish(), true);
             outer_column.add_child(Shrinkable::new(1.0, panels_row).finish());
@@ -26991,9 +27056,14 @@ impl View for Workspace {
         } else {
             let mut outer_column = Flex::column();
             if tab_bar_mode == ShowTabBar::Stacked {
+                #[cfg(not(target_os = "macos"))]
                 outer_column.add_child(self.render_tab_bar(self.tab_fixed_width, appearance, app));
+                #[cfg(target_os = "macos")]
+                outer_column.add_child(self.render_mux_host_bar(app));
             }
             let content = self.render_banner_and_active_tab(app, appearance);
+            #[cfg(target_os = "macos")]
+            let content = self.render_mux_layout(content, app);
             let panels_row = self.render_panels(app, Shrinkable::new(1.0, content).finish(), false);
             outer_column.add_child(Shrinkable::new(1.0, panels_row).finish());
             Container::new(outer_column.finish())
@@ -27053,6 +27123,11 @@ impl View for Workspace {
                 .with_uniform_padding(WORKSPACE_PADDING)
                 .finish(),
         );
+
+        #[cfg(target_os = "macos")]
+        if let Some(dialog) = self.render_mux_dialog(app) {
+            stack.add_child(dialog);
+        }
 
         if !use_simplified_wasm_tab_bar
             && FeatureFlag::VerticalTabs.is_enabled()

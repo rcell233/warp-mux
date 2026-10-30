@@ -1,56 +1,27 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Manager {
-    Zmx,
-    Tmux,
-}
-
-impl Manager {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Zmx => "zmx",
-            Self::Tmux => "tmux",
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Session {
-    pub manager: Manager,
-    pub id: String,
     pub name: String,
 }
 
-pub fn parse_sessions(manager: Manager, text: &str) -> Vec<Session> {
-    text.lines()
+pub fn parse_sessions(text: &str) -> Vec<Session> {
+    let mut sessions: Vec<_> = text
+        .lines()
         .filter_map(|line| {
-            let (id, name) = match manager {
-                Manager::Zmx => {
-                    let name = line
-                        .trim_start()
-                        .split('\t')
-                        .find_map(|field| field.strip_prefix("name="))?;
-                    (name, name)
-                }
-                Manager::Tmux => {
-                    let (id, name) = line.split_once('|')?;
-                    if !id.strip_prefix('$').is_some_and(|value| {
-                        !value.is_empty() && value.bytes().all(|c| c.is_ascii_digit())
-                    }) {
-                        return None;
-                    }
-                    (id, name)
-                }
-            };
+            let name = line
+                .trim_start()
+                .split('\t')
+                .find_map(|field| field.strip_prefix("name="))?;
             if name.is_empty() || name.chars().any(char::is_control) {
                 return None;
             }
             Some(Session {
-                manager,
-                id: id.to_owned(),
                 name: name.to_owned(),
             })
         })
-        .collect()
+        .collect();
+    sessions.sort_by(|a, b| a.name.cmp(&b.name));
+    sessions.dedup();
+    sessions
 }
 
 pub fn quote(value: &str) -> String {
@@ -66,19 +37,7 @@ pub fn valid_host(host: &str) -> bool {
 }
 
 pub fn attach_command(session: &Session) -> String {
-    let target = quote(&session.id);
-    match session.manager {
-        Manager::Zmx => format!("exec zmx attach {target}"),
-        Manager::Tmux => format!("exec tmux -u attach-session -t {target}"),
-    }
-}
-
-pub fn no_sessions_error(text: &str) -> bool {
-    let text = text.to_ascii_lowercase();
-    text.contains("no server running")
-        || text.contains("no sessions")
-        || (text.contains("error connecting")
-            && (text.contains("no such file") || text.contains("connection refused")))
+    format!("exec zmx attach {}", quote(&session.name))
 }
 
 #[cfg(test)]

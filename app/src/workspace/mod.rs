@@ -82,6 +82,13 @@ pub fn init(app: &mut AppContext) {
     use warpui::keymap::macros::*;
     app.register_binding_validator::<Workspace>(is_binding_pty_compliant);
 
+    #[cfg(target_os = "macos")]
+    app.register_fixed_bindings([FixedBinding::new(
+        "escape",
+        WorkspaceAction::DismissMuxDialog,
+        id!("Workspace") & id!("MuxDialogOpen"),
+    )]);
+
     modal::init(app);
     native_modal::init(app);
     lightbox_view::init(app);

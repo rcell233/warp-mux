@@ -130,14 +130,34 @@ pub enum WorkspaceAction {
     #[cfg(target_os = "macos")]
     ImportMuxHosts,
     #[cfg(target_os = "macos")]
-    ToggleMuxHost(String),
+    ShowMuxNewHost,
     #[cfg(target_os = "macos")]
-    RefreshMuxHost(String),
+    ShowMuxNewWindow,
     #[cfg(target_os = "macos")]
-    OpenMuxSsh(String),
+    CreateMuxWindow,
+    #[cfg(target_os = "macos")]
+    ShowMuxManageHosts,
+    #[cfg(target_os = "macos")]
+    DismissMuxDialog,
+    #[cfg(target_os = "macos")]
+    SaveMuxSelectedHosts,
+    #[cfg(target_os = "macos")]
+    ToggleMuxCandidate(String),
+    #[cfg(target_os = "macos")]
+    RemoveMuxSavedHost(String),
+    #[cfg(target_os = "macos")]
+    CreateMuxHost(Option<String>),
+    #[cfg(target_os = "macos")]
+    ActivateMuxHost(super::mux::navigation::HostId),
+    #[cfg(target_os = "macos")]
+    CloseMuxHost(super::mux::navigation::HostId),
+    #[cfg(target_os = "macos")]
+    RefreshMuxHost(super::mux::navigation::HostId),
+    #[cfg(target_os = "macos")]
+    AuthenticateMuxHost(super::mux::navigation::HostId),
     #[cfg(target_os = "macos")]
     OpenMuxSession {
-        host: String,
+        host: super::mux::navigation::HostId,
         session: super::mux::core::Session,
     },
     ActivateTab(usize),
@@ -937,9 +957,22 @@ impl WorkspaceAction {
         use WorkspaceAction::*;
         match self {
             #[cfg(target_os = "macos")]
-            OpenMuxSession { .. } | OpenMuxSsh(_) => true,
+            CreateMuxWindow
+            | OpenMuxSession { .. }
+            | CreateMuxHost(_)
+            | ActivateMuxHost(_)
+            | CloseMuxHost(_)
+            | AuthenticateMuxHost(_) => true,
             #[cfg(target_os = "macos")]
-            ImportMuxHosts | ToggleMuxHost(_) | RefreshMuxHost(_) => false,
+            ImportMuxHosts
+            | ShowMuxNewHost
+            | ShowMuxNewWindow
+            | ShowMuxManageHosts
+            | DismissMuxDialog
+            | SaveMuxSelectedHosts
+            | ToggleMuxCandidate(_)
+            | RemoveMuxSavedHost(_)
+            | RefreshMuxHost(_) => false,
             #[cfg(not(target_family = "wasm"))]
             ContinueConversationLocally { .. } => true,
             #[cfg(not(target_family = "wasm"))]

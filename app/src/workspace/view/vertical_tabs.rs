@@ -1679,16 +1679,7 @@ fn render_vertical_tabs_panel(
 
     let scrollable_groups = ClippedScrollable::vertical(
         state.scroll_state.clone(),
-        {
-            let groups = render_groups(state, workspace, app);
-            #[cfg(target_os = "macos")]
-            let groups = Flex::column()
-                .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-                .with_child(workspace.render_mux_hosts(app))
-                .with_child(groups)
-                .finish();
-            groups
-        },
+        render_groups(state, workspace, app),
         ScrollbarWidth::Custom(4.),
         theme.nonactive_ui_detail().into(),
         theme.active_ui_detail().into(),

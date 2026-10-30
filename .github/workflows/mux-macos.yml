@@ -57,12 +57,15 @@ jobs:
         with:
           key: mux-macos-${{ matrix.arch }}
           cache-on-failure: true
+          cache-workspace-crates: true
       - name: Install public build dependencies
         run: |
           brew install protobuf create-dmg
           ./script/macos/install_build_deps
           ./script/install_cargo_bundle
           ./script/install_cargo_release_deps --no-build-deps
+      - name: Check complete GUI before packaging
+        run: ./script/macos/bundle --channel oss --profile mux --arch '${{ matrix.arch }}' --check-only
       - name: Build OSS app and ad-hoc signed DMG
         id: bundle
         run: |
