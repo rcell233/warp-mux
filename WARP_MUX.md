@@ -115,6 +115,13 @@ run while the Intel job from a full build is still active. Normal pushes still b
 A recovery push can select one architecture with `[arm-only]` or `[intel-only]` in its commit
 message. The cache keys remain architecture-specific and unchanged.
 
+Apple Silicon builds use the standard `macos-15` ARM runner with Xcode 26; Intel builds use
+`macos-26-intel`. The ARM runner was moved from `macos-26` after repeated failures to acquire
+a hosted runner before any build steps ran. GitHub's [macOS 15 ARM image](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-arm64-Readme.md)
+includes Xcode 26. Switching images can change cache reuse and does not guarantee runner
+availability. A runner-allocation failure has no compiler log; successful artifacts from the
+other architecture remain downloadable even when the overall workflow is marked failed.
+
 ## Validation
 
 ```sh

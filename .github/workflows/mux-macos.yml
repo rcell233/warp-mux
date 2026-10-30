@@ -42,10 +42,10 @@ jobs:
         include: >-
           ${{ fromJSON(
             (inputs.architecture == 'aarch64' || contains(github.event.head_commit.message, '[arm-only]'))
-              && '[{"runner":"macos-26","arch":"aarch64"}]'
+              && '[{"runner":"macos-15","arch":"aarch64"}]'
             || (inputs.architecture == 'x86_64' || contains(github.event.head_commit.message, '[intel-only]'))
               && '[{"runner":"macos-26-intel","arch":"x86_64"}]'
-            || '[{"runner":"macos-26","arch":"aarch64"},{"runner":"macos-26-intel","arch":"x86_64"}]'
+            || '[{"runner":"macos-15","arch":"aarch64"},{"runner":"macos-26-intel","arch":"x86_64"}]'
           ) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 330
