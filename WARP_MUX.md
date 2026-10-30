@@ -107,6 +107,14 @@ Install **WarpOss.app** alongside official Warp. The package is signed ad-hoc, w
 notarization; macOS may require allowing it in Privacy & Security. Artifacts remain available
 for 14 days. No Apple credentials or Warp internal build services are required.
 
+## Retrying an individual architecture
+
+In Actions → Warp Mux macOS → Run workflow, choose `aarch64`, `x86_64`, or `both`.
+The architecture choices have separate concurrency groups, so an ARM-only recovery build can
+run while the Intel job from a full build is still active. Normal pushes still build both.
+A recovery push can select one architecture with `[arm-only]` or `[intel-only]` in its commit
+message. The cache keys remain architecture-specific and unchanged.
+
 ## Validation
 
 ```sh

@@ -4,12 +4,19 @@ on:
   push:
     branches: [master, codex/ssh-mux-macos]
   workflow_dispatch:
+    inputs:
+      architecture:
+        description: macOS architecture to build
+        type: choice
+        required: true
+        default: both
+        options: [both, aarch64, x86_64]
 
 permissions:
   contents: read
 
 concurrency:
-  group: mux-macos-${{ github.ref }}
+  group: mux-macos-${{ github.ref }}-${{ inputs.architecture || (contains(github.event.head_commit.message, '[arm-only]') && 'aarch64') || (contains(github.event.head_commit.message, '[intel-only]') && 'x86_64') || 'both' }}
   cancel-in-progress: true
 
 jobs:
@@ -32,11 +39,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: macos-26
-            arch: aarch64
-          - runner: macos-26-intel
-            arch: x86_64
+        include: >-
+          ${{ fromJSON(
+            (inputs.architecture == 'aarch64' || contains(github.event.head_commit.message, '[arm-only]'))
+              && '[{"runner":"macos-26","arch":"aarch64"}]'
+            || (inputs.architecture == 'x86_64' || contains(github.event.head_commit.message, '[intel-only]'))
+              && '[{"runner":"macos-26-intel","arch":"x86_64"}]'
+            || '[{"runner":"macos-26","arch":"aarch64"},{"runner":"macos-26-intel","arch":"x86_64"}]'
+          ) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 330
     env:
