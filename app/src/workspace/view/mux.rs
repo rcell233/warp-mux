@@ -8,9 +8,9 @@ use warp_core::ui::Icon;
 use warp_core::ui::theme::color::internal_colors;
 use warpui::elements::{
     Align, Border, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container,
-    CornerRadius, CrossAxisAlignment, Dismiss, Element, Expanded, Flex, Hoverable,
-    MainAxisAlignment, MainAxisSize, MouseStateHandle, Padding, ParentElement, Radius,
-    ScrollbarWidth, Shrinkable, Text,
+    CornerRadius, CrossAxisAlignment, Dismiss, DispatchEventResult, Element, EventHandler,
+    Expanded, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, Padding,
+    ParentElement, Radius, ScrollbarWidth, Shrinkable, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::platform::Cursor;
@@ -819,7 +819,13 @@ impl Workspace {
         };
         let mut heading = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(Expanded::new(1., mux_text(title, 18., true, appearance)).finish());
+            .with_child(
+                Expanded::new(
+                    1.,
+                    mux_text(title, appearance.ui_font_size(), true, appearance),
+                )
+                .finish(),
+            );
         heading.add_child(self.mux_button(
             "dismiss",
             button::Content::Icon(Icon::X),
@@ -1026,28 +1032,16 @@ impl Workspace {
         }
         let column = Flex::column()
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .with_spacing(16.)
+            .with_spacing(12.)
             .with_child(heading.finish())
             .with_child(mux_note(subtitle, appearance))
             .with_child(ConstrainedBox::new(scroll).with_max_height(340.).finish())
             .with_child(footer.finish())
             .finish();
-        let modal = ConstrainedBox::new(
-            Container::new(column)
-                .with_padding(Padding::uniform(24.))
-                .with_background(appearance.theme().surface_3())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(12.)))
-                .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
-                .finish(),
-        )
-        .with_width(520.)
-        .finish();
-        Some(
-            Dismiss::new(Align::new(modal).finish())
-                .prevent_interaction_with_other_elements()
-                .on_dismiss(|ctx, _| ctx.dispatch_typed_action(WorkspaceAction::DismissMuxDialog))
-                .finish(),
-        )
+        let modal = ConstrainedBox::new(mux_dialog_surface(column, appearance))
+            .with_width(520.)
+            .finish();
+        Some(mux_dialog_overlay(modal))
     }
 
     fn mux_button(
@@ -1151,6 +1145,36 @@ impl Workspace {
         .with_cursor(Cursor::PointingHand)
         .finish()
     }
+}
+
+fn mux_dialog_surface(content: Box<dyn Element>, appearance: &Appearance) -> Box<dyn Element> {
+    Container::new(content)
+        .with_padding(Padding::uniform(16.))
+        .with_background(appearance.theme().surface_1())
+        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
+        .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
+        .finish()
+}
+
+fn mux_dialog_overlay(panel: Box<dyn Element>) -> Box<dyn Element> {
+    let panel = EventHandler::new(panel)
+        .on_left_mouse_down(|_, _, _| DispatchEventResult::StopPropagation)
+        .finish();
+    EventHandler::new(
+        Dismiss::new(Align::new(panel).finish())
+            .prevent_interaction_with_other_elements()
+            .on_dismiss(|ctx, _| ctx.dispatch_typed_action(WorkspaceAction::DismissMuxDialog))
+            .finish(),
+    )
+    .on_keydown(|ctx, _, keystroke| {
+        if keystroke.is_unmodified_key("escape") {
+            ctx.dispatch_typed_action(WorkspaceAction::DismissMuxDialog);
+            DispatchEventResult::StopPropagation
+        } else {
+            DispatchEventResult::PropagateToParent
+        }
+    })
+    .finish()
 }
 
 fn mux_text(text: &str, size: f32, bold: bool, appearance: &Appearance) -> Box<dyn Element> {

@@ -9,11 +9,12 @@ fn connection_loss_retries_same_command_then_stops_on_clean_exit() {
         quote(counter.to_str().unwrap()),
         quote(counter.to_str().unwrap())
     );
-    let output = command::blocking::Command::new("/bin/sh")
-        .args(["-c", &retry_transport(&command)])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
+    let output = run_in_terminal(&retry_transport(&command));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("Retrying in 1s"));
     assert!(stdout.ends_with("restored"));
@@ -21,10 +22,7 @@ fn connection_loss_retries_same_command_then_stops_on_clean_exit() {
 
 #[test]
 fn remote_errors_do_not_restart_or_create_another_session() {
-    let output = command::blocking::Command::new("/bin/sh")
-        .args(["-c", &retry_transport("(exit 7)")])
-        .output()
-        .unwrap();
+    let output = run_in_terminal(&retry_transport("(exit 7)"));
     assert_eq!(output.status.code(), Some(7));
     assert!(output.stdout.is_empty());
 }
@@ -36,12 +34,24 @@ fn session_command_preserves_shell_arguments() {
     };
     let script = ssh_session_script("prod", &session);
     let command = script.replace("/usr/bin/ssh", "printf '%s\\n'");
-    let output = command::blocking::Command::new("/bin/sh")
-        .args(["-c", &command])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
+    let output = run_in_terminal(&command);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains(&remote_command(&attach_command(&session))));
     assert!(stdout.contains("ServerAliveInterval=15"));
+}
+
+fn run_in_terminal(script: &str) -> std::process::Output {
+    let command = format!(
+        "command /bin/sh -c {}",
+        warp_util::path::ShellFamily::Posix.shell_escape(script)
+    );
+    command::blocking::Command::new("/bin/sh")
+        .args(["-c", &command])
+        .output()
+        .unwrap()
 }

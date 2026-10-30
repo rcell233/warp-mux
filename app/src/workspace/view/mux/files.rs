@@ -1,4 +1,4 @@
-use warpui::elements::{DispatchEventResult, EventHandler, Percentage};
+use warpui::elements::Percentage;
 use warpui::platform::SaveFilePickerConfiguration;
 
 use super::*;
@@ -469,23 +469,12 @@ impl Workspace {
             )
             .finish(),
         );
-        let panel = ConstrainedBox::new(
-            Container::new(column.finish())
-                .with_padding(Padding::uniform(16.))
-                .with_background(appearance.theme().surface_1())
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.)))
-                .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
-                .finish(),
+        let panel = ConstrainedBox::new(mux_dialog_surface(column.finish(), appearance))
+            .with_max_width(760.)
+            .with_max_height(560.)
+            .finish();
+        mux_dialog_overlay(
+            Percentage::width(0.85, Percentage::height(0.85, panel).finish()).finish(),
         )
-        .with_max_width(760.)
-        .with_max_height(560.)
-        .finish();
-        Dismiss::new(
-            Align::new(Percentage::width(0.85, Percentage::height(0.85, panel).finish()).finish())
-                .finish(),
-        )
-        .prevent_interaction_with_other_elements()
-        .on_dismiss(|_, _| {})
-        .finish()
     }
 }

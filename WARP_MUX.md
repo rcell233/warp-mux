@@ -69,8 +69,10 @@ host tabs once so their SSH clients use the new wrapper.
 ## File browser
 
 The folder button in the window rail, Project Explorer toolbar entry, and its shortcut open a
-floating file browser. It overlays the terminal instead of adding a docked panel. Only Escape
-and the close button dismiss it; clicking blank space or outside the panel keeps it open. Other Warp tools retain their native toolbar.
+floating file browser. It overlays the terminal instead of adding a docked panel. The host and
+file dialogs share the same surface, typography, padding, border and corner radius. Clicks on
+blank space inside a dialog keep it open; clicking outside, Escape, or its close button dismisses
+it. The dialog retains keyboard focus instead of redirecting it into the terminal.
 
 Choose **Base path** and press Go/Enter. Valid base paths and the last successfully visited directory are remembered per SSH host (and
 separately for Local) in the saved-host registry, including across app restarts. During the same
@@ -131,7 +133,9 @@ cargo clippy --locked --manifest-path tools/mux-tests/Cargo.toml --all-targets -
 ./script/macos/bundle --channel oss --profile mux --selfsign --arch aarch64
 ```
 
-The production backend is tested independently of the GPU stack. Tests cover registry
+The production backend is tested independently of the GPU stack. Reconnection scripts are
+tested through the same shell escaping and outer-shell invocation used by a terminal, including
+transport retries, clean exits and literal remote arguments. Tests cover registry
 persistence/removal, malformed-file handling, host/window selection isolation, config Includes,
 zmx output, and shell escaping. CI checks the complete GUI, builds DMGs, then verifies disk-image
 integrity and app signatures. Real SSH authentication and mouse/keyboard behavior still require

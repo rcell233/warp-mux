@@ -28398,6 +28398,10 @@ impl View for Workspace {
     }
 
     fn on_focus(&mut self, focus_ctx: &FocusContext, ctx: &mut ViewContext<Self>) {
+        #[cfg(target_os = "macos")]
+        if self.mux_dialog_open() {
+            return;
+        }
         if focus_ctx.is_self_focused() {
             self.focus_active_tab(ctx);
         }
