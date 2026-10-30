@@ -26544,9 +26544,7 @@ impl TypedActionView for Workspace {
             }
             #[cfg(target_os = "macos")]
             ToggleProjectExplorer | OpenProjectExplorer => {
-                if matches!(action, ToggleProjectExplorer)
-                    && self.mux_panel.dialog == Some(mux::MuxDialog::Files)
-                {
+                if matches!(action, ToggleProjectExplorer) && self.mux_files_open() {
                     self.show_mux_dialog(None, ctx);
                 } else {
                     self.open_mux_files(ctx);

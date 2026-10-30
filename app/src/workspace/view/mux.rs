@@ -558,6 +558,10 @@ impl Workspace {
         ctx.notify();
     }
 
+    pub(super) fn mux_files_open(&self) -> bool {
+        self.mux_panel.dialog == Some(MuxDialog::Files)
+    }
+
     pub(super) fn mux_dialog_open(&self) -> bool {
         self.mux_panel.dialog.is_some()
     }

@@ -1121,7 +1121,7 @@ impl LeftPanelView {
     ) {
         #[cfg(target_os = "macos")]
         if matches!(action, LeftPanelAction::ProjectExplorer) {
-            ctx.dispatch_typed_action(WorkspaceAction::ShowMuxFiles);
+            ctx.dispatch_typed_action_deferred(WorkspaceAction::ShowMuxFiles);
             return;
         }
         match action {
