@@ -81,6 +81,16 @@ jobs:
           lipo -archs target/mux/bundle/osx/WarpOss.app/Contents/MacOS/warp-oss
           shasum -a 256 "$DMG_PATH" > "$DMG_PATH.sha256"
           printf '## Download\n\nDownload **WarpMux-macOS-${{ matrix.arch }}** under Artifacts below and unzip it to obtain the DMG.\n\nCommit: `%s`\n\nThe app is `WarpOss.app`; this is an ad-hoc signed, unnotarized test build.\n' "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Launch packaged app and capture startup
+        run: bash .github/scripts/mux-startup-smoke.sh target/mux/bundle/osx/WarpOss.app target/mux-startup
+      - name: Upload startup evidence
+        if: always() && !cancelled()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: WarpMux-startup-${{ matrix.arch }}
+          path: target/mux-startup/
+          if-no-files-found: ignore
+          retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: WarpMux-macOS-${{ matrix.arch }}
