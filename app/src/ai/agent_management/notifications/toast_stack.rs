@@ -71,6 +71,7 @@ impl AgentNotificationToastStack {
             AgentManagementEvent::NotificationUpdated
             | AgentManagementEvent::AllNotificationsMarkedRead => {
                 me.remove_dismissed_toasts(ctx);
+                ctx.notify();
             }
             AgentManagementEvent::ConversationNeedsAttention { .. } => {}
         });

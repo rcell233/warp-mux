@@ -13,6 +13,7 @@ use warpui::elements::{
 };
 use warpui::fonts::Weight;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
+use warpui::ui_components::progress_bar::ProgressBar;
 use warpui::{View, ViewContext, ViewHandle};
 
 use crate::ai::agent::conversation::ConversationStatus;
@@ -97,7 +98,7 @@ pub(crate) fn render_notification_item_content(
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
 
-    let text_column = if item.branch.is_some() {
+    let mut text_column = if item.branch.is_some() {
         render_rich_text_column(
             item,
             artifact_buttons,
@@ -118,6 +119,31 @@ pub(crate) fn render_notification_item_content(
             appearance,
         )
     };
+
+    if let Some(progress) = item.transfer_progress {
+        text_column = Flex::column()
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
+            .with_child(text_column)
+            .with_child(
+                Container::new(
+                    ProgressBar::new(
+                        progress,
+                        UiComponentStyles {
+                            width: Some(200.),
+                            height: Some(3.),
+                            foreground: Some(theme.accent().into()),
+                            background: Some(theme.outline().into()),
+                            ..Default::default()
+                        },
+                    )
+                    .build()
+                    .finish(),
+                )
+                .with_margin_top(8.)
+                .finish(),
+            )
+            .finish();
+    }
 
     Flex::row()
         .with_cross_axis_alignment(CrossAxisAlignment::Start)
@@ -404,8 +430,23 @@ fn render_agent_avatar(
     category: NotificationCategory,
     theme: &WarpTheme,
 ) -> Box<dyn Element> {
+    if let NotificationSourceAgent::FileTransfer { upload } = agent {
+        return ConstrainedBox::new(
+            (if upload {
+                Icon::ArrowUp
+            } else {
+                Icon::Download
+            })
+            .to_warpui_icon(theme.foreground())
+            .finish(),
+        )
+        .with_width(NOTIFICATION_AVATAR_SIZE)
+        .with_height(NOTIFICATION_AVATAR_SIZE)
+        .finish();
+    }
     let status = notification_category_to_conversation_status(category);
     let variant = match agent {
+        NotificationSourceAgent::FileTransfer { .. } => unreachable!(),
         NotificationSourceAgent::Oz { is_ambient } => IconWithStatusVariant::OzAgent {
             status: Some(status),
             is_ambient,
@@ -429,6 +470,7 @@ fn notification_category_to_conversation_status(
     category: NotificationCategory,
 ) -> ConversationStatus {
     match category {
+        NotificationCategory::Progress => ConversationStatus::InProgress,
         NotificationCategory::Complete => ConversationStatus::Success,
         NotificationCategory::Request => ConversationStatus::Blocked {
             blocked_action: String::new(),

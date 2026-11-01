@@ -127,6 +127,55 @@ pub enum AutoCloudHandoffTrigger {
 
 #[derive(Debug, Clone)]
 pub enum WorkspaceAction {
+    #[cfg(target_os = "macos")]
+    ImportMuxHosts,
+    #[cfg(target_os = "macos")]
+    ShowMuxFiles,
+    #[cfg(target_os = "macos")]
+    ApplyMuxBasePath,
+    #[cfg(target_os = "macos")]
+    OpenMuxDirectory(String),
+    #[cfg(target_os = "macos")]
+    DownloadMuxFile(String),
+    #[cfg(target_os = "macos")]
+    QuickDownloadMuxFile(String),
+    #[cfg(target_os = "macos")]
+    PickMuxUpload,
+    #[cfg(target_os = "macos")]
+    UploadMuxFiles(Vec<String>),
+    #[cfg(target_os = "macos")]
+    ShowMuxTransfers,
+    #[cfg(target_os = "macos")]
+    ShowMuxNewHost,
+    #[cfg(target_os = "macos")]
+    ShowMuxNewWindow,
+    #[cfg(target_os = "macos")]
+    CreateMuxWindow,
+    #[cfg(target_os = "macos")]
+    ShowMuxManageHosts,
+    #[cfg(target_os = "macos")]
+    DismissMuxDialog,
+    #[cfg(target_os = "macos")]
+    SaveMuxSelectedHosts,
+    #[cfg(target_os = "macos")]
+    ToggleMuxCandidate(String),
+    #[cfg(target_os = "macos")]
+    RemoveMuxSavedHost(String),
+    #[cfg(target_os = "macos")]
+    CreateMuxHost(Option<String>),
+    #[cfg(target_os = "macos")]
+    ActivateMuxHost(super::mux::navigation::HostId),
+    #[cfg(target_os = "macos")]
+    CloseMuxHost(super::mux::navigation::HostId),
+    #[cfg(target_os = "macos")]
+    RefreshMuxHost(super::mux::navigation::HostId),
+    #[cfg(target_os = "macos")]
+    AuthenticateMuxHost(super::mux::navigation::HostId),
+    #[cfg(target_os = "macos")]
+    OpenMuxSession {
+        host: super::mux::navigation::HostId,
+        session: super::mux::core::Session,
+    },
     ActivateTab(usize),
     ActivatePrevTab,
     ActivateNextTab,
@@ -923,6 +972,31 @@ impl WorkspaceAction {
     pub fn should_save_app_state_on_action(&self) -> bool {
         use WorkspaceAction::*;
         match self {
+            #[cfg(target_os = "macos")]
+            CreateMuxWindow
+            | OpenMuxSession { .. }
+            | CreateMuxHost(_)
+            | ActivateMuxHost(_)
+            | CloseMuxHost(_)
+            | AuthenticateMuxHost(_) => true,
+            #[cfg(target_os = "macos")]
+            ImportMuxHosts
+            | ShowMuxFiles
+            | ApplyMuxBasePath
+            | OpenMuxDirectory(_)
+            | DownloadMuxFile(_)
+            | QuickDownloadMuxFile(_)
+            | PickMuxUpload
+            | UploadMuxFiles(_)
+            | ShowMuxTransfers
+            | ShowMuxNewHost
+            | ShowMuxNewWindow
+            | ShowMuxManageHosts
+            | DismissMuxDialog
+            | SaveMuxSelectedHosts
+            | ToggleMuxCandidate(_)
+            | RemoveMuxSavedHost(_)
+            | RefreshMuxHost(_) => false,
             #[cfg(not(target_family = "wasm"))]
             ContinueConversationLocally { .. } => true,
             #[cfg(not(target_family = "wasm"))]

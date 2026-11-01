@@ -15336,6 +15336,7 @@ dependencies = [
  "getset",
  "git2",
  "gloo",
+ "glob",
  "handlebars",
  "hashbrown 0.17.1",
  "hex",

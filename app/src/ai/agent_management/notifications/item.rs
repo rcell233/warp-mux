@@ -18,6 +18,7 @@ impl NotificationId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotificationCategory {
+    Progress,
     /// The agent has stopped (i.e. successfully completed or was cancelled)
     Complete,
     /// The agent needs user action (i.e. blocked on some permission request or idle prompt)
@@ -48,6 +49,7 @@ impl NotificationFilter {
 #[derive(Debug, Clone, Copy)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum NotificationSourceAgent {
+    FileTransfer { upload: bool },
     Oz { is_ambient: bool },
     CLI { agent: CLIAgent, is_ambient: bool },
 }
@@ -55,6 +57,7 @@ pub enum NotificationSourceAgent {
 impl NotificationSourceAgent {
     pub fn is_ambient(&self) -> bool {
         match self {
+            Self::FileTransfer { .. } => false,
             NotificationSourceAgent::Oz { is_ambient }
             | NotificationSourceAgent::CLI { is_ambient, .. } => *is_ambient,
         }
@@ -66,6 +69,7 @@ impl NotificationSourceAgent {
 /// and cleanup (removing notifications when the source closes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NotificationOrigin {
+    FileTransfer(Uuid),
     Conversation(AIConversationId),
     /// CLI sessions are keyed by terminal view because we only track one session per pane.
     CLISession(EntityId),
@@ -90,6 +94,7 @@ pub struct NotificationItem {
     /// When present, the notification renders in "rich" layout with a branch header row.
     /// When absent, it falls back to the "simple" layout.
     pub branch: Option<String>,
+    pub transfer_progress: Option<f32>,
 }
 
 impl NotificationItem {
@@ -126,6 +131,7 @@ impl NotificationItem {
             terminal_view_id,
             artifacts,
             branch,
+            transfer_progress: None,
         }
     }
 }
@@ -175,6 +181,10 @@ impl NotificationItems {
 
     pub(crate) fn get_by_id(&self, id: NotificationId) -> Option<&NotificationItem> {
         self.items.iter().find(|item| item.id == id)
+    }
+
+    pub(crate) fn get_mut_by_id(&mut self, id: NotificationId) -> Option<&mut NotificationItem> {
+        self.items.iter_mut().find(|item| item.id == id)
     }
 
     /// Marks all notifications from the given terminal view as read.

@@ -13,6 +13,8 @@ pub mod header_toolbar_item;
 pub mod hoa_onboarding;
 mod home;
 mod lightbox_view;
+#[cfg(target_os = "macos")]
+pub(crate) mod mux;
 mod native_modal;
 mod one_time_modal_model;
 mod registry;
@@ -79,6 +81,13 @@ pub fn init(app: &mut AppContext) {
     app.add_singleton_model(|_| cross_window_tab_drag::CrossWindowTabDrag::new());
     use warpui::keymap::macros::*;
     app.register_binding_validator::<Workspace>(is_binding_pty_compliant);
+
+    #[cfg(target_os = "macos")]
+    app.register_fixed_bindings([FixedBinding::new(
+        "escape",
+        WorkspaceAction::DismissMuxDialog,
+        id!("Workspace") & id!("MuxDialogOpen"),
+    )]);
 
     modal::init(app);
     native_modal::init(app);
