@@ -8,6 +8,8 @@ publish = false
 
 [dependencies]
 anyhow = "1"
+async-fs = "2.1.2"
+futures-lite = "1.13.0"
 command = { path = "../../crates/command" }
 tokio = { version = "1", features = ["rt", "time"] }
 glob = "=0.3.1"

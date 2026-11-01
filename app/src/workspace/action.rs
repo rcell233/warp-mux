@@ -140,6 +140,12 @@ pub enum WorkspaceAction {
     #[cfg(target_os = "macos")]
     QuickDownloadMuxFile(String),
     #[cfg(target_os = "macos")]
+    PickMuxUpload,
+    #[cfg(target_os = "macos")]
+    UploadMuxFiles(Vec<String>),
+    #[cfg(target_os = "macos")]
+    ShowMuxTransfers,
+    #[cfg(target_os = "macos")]
     ShowMuxNewHost,
     #[cfg(target_os = "macos")]
     ShowMuxNewWindow,
@@ -980,6 +986,9 @@ impl WorkspaceAction {
             | OpenMuxDirectory(_)
             | DownloadMuxFile(_)
             | QuickDownloadMuxFile(_)
+            | PickMuxUpload
+            | UploadMuxFiles(_)
+            | ShowMuxTransfers
             | ShowMuxNewHost
             | ShowMuxNewWindow
             | ShowMuxManageHosts

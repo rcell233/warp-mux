@@ -3162,41 +3162,42 @@ impl Workspace {
             me.handle_agent_management_view_event(event, ctx);
         });
 
-        let notification_mailbox_view = if FeatureFlag::HOANotifications.is_enabled() {
-            let view = ctx.add_typed_action_view(NotificationMailboxView::new);
-            ctx.subscribe_to_view(&view, move |me, _, event, ctx| match event {
-                NotificationMailboxViewEvent::NavigateToTerminal {
-                    terminal_view_id, ..
-                } => {
-                    me.current_workspace_state.is_notification_mailbox_open = false;
-                    me.tab_bar_pinned_by_popup = false;
-                    me.sync_window_button_visibility(ctx);
-                    if let Some(stack) = &me.notification_toast_stack {
-                        stack.update(ctx, |stack, ctx| stack.set_mailbox_open(false, ctx));
+        let notification_mailbox_view =
+            if cfg!(target_os = "macos") || FeatureFlag::HOANotifications.is_enabled() {
+                let view = ctx.add_typed_action_view(NotificationMailboxView::new);
+                ctx.subscribe_to_view(&view, move |me, _, event, ctx| match event {
+                    NotificationMailboxViewEvent::NavigateToTerminal {
+                        terminal_view_id, ..
+                    } => {
+                        me.current_workspace_state.is_notification_mailbox_open = false;
+                        me.tab_bar_pinned_by_popup = false;
+                        me.sync_window_button_visibility(ctx);
+                        if let Some(stack) = &me.notification_toast_stack {
+                            stack.update(ctx, |stack, ctx| stack.set_mailbox_open(false, ctx));
+                        }
+                        me.handle_action(
+                            &WorkspaceAction::FocusTerminalViewInWorkspace {
+                                terminal_view_id: *terminal_view_id,
+                            },
+                            ctx,
+                        );
+                        ctx.notify();
                     }
-                    me.handle_action(
-                        &WorkspaceAction::FocusTerminalViewInWorkspace {
-                            terminal_view_id: *terminal_view_id,
-                        },
-                        ctx,
-                    );
-                    ctx.notify();
-                }
-                NotificationMailboxViewEvent::Dismissed => {
-                    me.current_workspace_state.is_notification_mailbox_open = false;
-                    me.tab_bar_pinned_by_popup = false;
-                    me.sync_window_button_visibility(ctx);
-                    if let Some(stack) = &me.notification_toast_stack {
-                        stack.update(ctx, |stack, ctx| stack.set_mailbox_open(false, ctx));
+                    NotificationMailboxViewEvent::Dismissed => {
+                        me.current_workspace_state.is_notification_mailbox_open = false;
+                        me.tab_bar_pinned_by_popup = false;
+                        me.sync_window_button_visibility(ctx);
+                        if let Some(stack) = &me.notification_toast_stack {
+                            stack.update(ctx, |stack, ctx| stack.set_mailbox_open(false, ctx));
+                        }
+                        me.focus_active_tab(ctx);
+                        ctx.notify();
                     }
-                    me.focus_active_tab(ctx);
-                    ctx.notify();
-                }
-            });
-            Some(view)
-        } else {
-            None
-        };
+                });
+                Some(view)
+            } else {
+                None
+            };
 
         let notification_toast_stack = if FeatureFlag::HOANotifications.is_enabled() {
             Some(ctx.add_typed_action_view(AgentNotificationToastStack::new))
@@ -24244,6 +24245,22 @@ impl TypedActionView for Workspace {
             #[cfg(target_os = "macos")]
             QuickDownloadMuxFile(path) => self.download_mux_file(path.clone(), true, ctx),
             #[cfg(target_os = "macos")]
+            PickMuxUpload => self.pick_mux_upload(ctx),
+            #[cfg(target_os = "macos")]
+            UploadMuxFiles(paths) => self.drop_mux_uploads(paths.clone(), ctx),
+            #[cfg(target_os = "macos")]
+            ShowMuxTransfers => {
+                self.show_mux_dialog(None, ctx);
+                if !self.current_workspace_state.is_notification_mailbox_open {
+                    self.handle_action(
+                        &ToggleNotificationMailbox {
+                            select_first: false,
+                        },
+                        ctx,
+                    );
+                }
+            }
+            #[cfg(target_os = "macos")]
             ShowMuxNewHost => self.show_mux_dialog(Some(mux::MuxDialog::NewHost), ctx),
             #[cfg(target_os = "macos")]
             ShowMuxNewWindow => self.show_mux_dialog(Some(mux::MuxDialog::NewWindow), ctx),
@@ -25165,8 +25182,9 @@ impl TypedActionView for Workspace {
                 }
             }
             ToggleNotificationMailbox { select_first } => {
-                if FeatureFlag::HOANotifications.is_enabled()
-                    && *AISettings::as_ref(ctx).show_agent_notifications
+                if cfg!(target_os = "macos")
+                    || (FeatureFlag::HOANotifications.is_enabled()
+                        && *AISettings::as_ref(ctx).show_agent_notifications)
                 {
                     let opening = !self.current_workspace_state.is_notification_mailbox_open;
                     self.current_workspace_state.is_notification_mailbox_open = opening;
@@ -28123,16 +28141,33 @@ impl View for Workspace {
             } else {
                 (PositionedElementAnchor::BottomRight, ChildAnchor::TopRight)
             };
-            stack.add_positioned_overlay_child(
-                ChildView::new(view).finish(),
+            let configuration = &TabSettings::as_ref(app).header_toolbar_chip_selection;
+            let hidden_anchor = !HeaderToolbarItemKind::NotificationsMailbox.is_available(app)
+                || !configuration.contains_item(&HeaderToolbarItemKind::NotificationsMailbox);
+            let positioning = if cfg!(target_os = "macos") && hidden_anchor {
+                OffsetPositioning::offset_from_parent(
+                    vec2f(
+                        if mailbox_on_left { 12. } else { -12. },
+                        TOTAL_TAB_BAR_HEIGHT + 8.,
+                    ),
+                    ParentOffsetBounds::WindowByPosition,
+                    if mailbox_on_left {
+                        ParentAnchor::TopLeft
+                    } else {
+                        ParentAnchor::TopRight
+                    },
+                    child_anchor,
+                )
+            } else {
                 OffsetPositioning::offset_from_save_position_element(
                     NOTIFICATIONS_MAILBOX_POSITION_ID,
                     Vector2F::zero(),
                     PositionedElementOffsetBounds::WindowByPosition,
                     anchor,
                     child_anchor,
-                ),
-            );
+                )
+            };
+            stack.add_positioned_overlay_child(ChildView::new(view).finish(), positioning);
         }
 
         if !FeatureFlag::AgentMode.is_enabled()

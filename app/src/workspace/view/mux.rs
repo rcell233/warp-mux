@@ -27,6 +27,7 @@ use crate::workspace::mux::hosts::SavedHosts;
 use crate::workspace::mux::navigation::{HostId, Navigation, Target};
 use crate::workspace::{Workspace, WorkspaceAction, mux};
 
+mod file_drop;
 mod files;
 
 #[derive(Clone, Copy, PartialEq, Eq)]

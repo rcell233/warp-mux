@@ -2,6 +2,7 @@ use warpui::elements::Percentage;
 use warpui::platform::SaveFilePickerConfiguration;
 
 use super::*;
+use crate::ai::agent_management::AgentNotificationsModel;
 use crate::view_components::DismissibleToast;
 use crate::workspace::mux::files::{self, Listing};
 
@@ -13,6 +14,7 @@ struct BrowserState {
     error: Option<String>,
     generation: u64,
     scroll: ClippedScrollStateHandle,
+    dirty: bool,
 }
 
 #[derive(Default)]
@@ -20,9 +22,24 @@ pub(super) struct FileBrowser {
     target: Option<Target>,
     editor: Option<ViewHandle<EditorView>>,
     states: HashMap<String, BrowserState>,
-    downloading: bool,
     choosing_destination: bool,
+    choosing_upload: bool,
 }
+
+enum Transfer {
+    Download {
+        source: String,
+        destination: PathBuf,
+        total: u64,
+    },
+    Upload {
+        source: PathBuf,
+        base: String,
+        directory: String,
+    },
+}
+
+static TRANSFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(3);
 
 impl FileBrowser {
     fn key(&self) -> String {
@@ -84,6 +101,7 @@ impl Workspace {
         let files = &mut self.mux_panel.files;
         let first_open = !files.states.contains_key(&key);
         let mut restore_path = String::new();
+        let dirty = files.states.get(&key).is_some_and(|state| state.dirty);
         if first_open {
             let saved = SavedHosts::load(&registry_path()).unwrap_or_default();
             let base = saved
@@ -100,13 +118,20 @@ impl Workspace {
                 },
             );
         }
+        if dirty {
+            restore_path = files.states[&key]
+                .listing
+                .as_ref()
+                .map(|listing| listing.path.clone())
+                .unwrap_or_default();
+        }
         files.target = Some(target);
         let base = files.state().base.clone();
         if let Some(editor) = files.editor.clone() {
             editor.update(ctx, |view, ctx| view.set_buffer_text(&base, ctx));
         }
         self.show_mux_dialog(Some(MuxDialog::Files), ctx);
-        if first_open {
+        if first_open || dirty {
             self.load_mux_directory(restore_path, ctx);
         }
     }
@@ -156,6 +181,7 @@ impl Workspace {
                 state.loading = false;
                 match result {
                     Ok(listing) => {
+                        state.dirty = false;
                         let save_result = (|| -> anyhow::Result<()> {
                             let mut saved = SavedHosts::load(&registry_path())?;
                             saved.base_paths.insert(key.clone(), listing.base.clone());
@@ -184,7 +210,7 @@ impl Workspace {
         ctx: &mut ViewContext<Self>,
     ) {
         let files = &self.mux_panel.files;
-        if files.downloading || files.choosing_destination {
+        if files.choosing_destination {
             return;
         }
         let Some(target) = files.target.clone() else {
@@ -198,11 +224,20 @@ impl Workspace {
         }) else {
             return;
         };
+        let total = entry.size;
         if direct {
             match dirs::download_dir()
                 .and_then(|directory| files::download_destination(&directory, &entry.name).ok())
             {
-                Some(destination) => self.start_mux_download(target, source, destination, ctx),
+                Some(destination) => self.start_mux_transfer(
+                    target,
+                    Transfer::Download {
+                        source,
+                        destination,
+                        total,
+                    },
+                    ctx,
+                ),
                 None => self.toast_stack.update(ctx, |view, ctx| {
                     view.add_ephemeral_toast(
                         DismissibleToast::error(
@@ -227,37 +262,216 @@ impl Workspace {
                     ctx.notify();
                     return;
                 };
-                workspace.start_mux_download(target, source, PathBuf::from(path), ctx);
+                workspace.start_mux_transfer(
+                    target,
+                    Transfer::Download {
+                        source,
+                        destination: PathBuf::from(path),
+                        total,
+                    },
+                    ctx,
+                );
             },
             config,
         );
     }
 
-    fn start_mux_download(
+    pub(in crate::workspace::view) fn pick_mux_upload(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.mux_panel.files.choosing_upload {
+            return;
+        }
+        let Some((target, base, directory)) = self.mux_upload_target() else {
+            return;
+        };
+        self.mux_panel.files.choosing_upload = true;
+        let workspace = ctx.handle();
+        ctx.open_file_picker(
+            move |result, ctx| {
+                if let Some(workspace) = workspace.upgrade(ctx) {
+                    workspace.update(ctx, |workspace, ctx| {
+                        workspace.mux_panel.files.choosing_upload = false;
+                        match result {
+                            Ok(paths) => {
+                                workspace.start_mux_uploads(target, base, directory, paths, ctx)
+                            }
+                            Err(error) => workspace.toast_stack.update(ctx, |view, ctx| {
+                                view.add_ephemeral_toast(
+                                    DismissibleToast::error(error.to_string()),
+                                    ctx,
+                                )
+                            }),
+                        }
+                        ctx.notify();
+                    });
+                }
+            },
+            warpui::platform::FilePickerConfiguration::new().allow_multi_select(),
+        );
+        ctx.notify();
+    }
+
+    fn mux_upload_target(&self) -> Option<(Target, String, String)> {
+        if !self.mux_files_open() {
+            return None;
+        }
+        let files = &self.mux_panel.files;
+        if files.state().loading {
+            return None;
+        }
+        let listing = files.state().listing.as_ref()?;
+        Some((
+            files.target.clone()?,
+            listing.base.clone(),
+            listing.path.clone(),
+        ))
+    }
+
+    pub(in crate::workspace::view) fn drop_mux_uploads(
         &mut self,
-        target: Target,
-        source: String,
-        destination: PathBuf,
+        paths: Vec<String>,
         ctx: &mut ViewContext<Self>,
     ) {
-        self.mux_panel.files.downloading = true;
-        let label = destination.display().to_string();
+        if let Some((target, base, directory)) = self.mux_upload_target() {
+            self.start_mux_uploads(target, base, directory, paths, ctx);
+        }
+    }
+
+    fn start_mux_uploads(
+        &mut self,
+        target: Target,
+        base: String,
+        directory: String,
+        paths: Vec<String>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        for source in paths {
+            self.start_mux_transfer(
+                target.clone(),
+                Transfer::Upload {
+                    source: PathBuf::from(source),
+                    base: base.clone(),
+                    directory: directory.clone(),
+                },
+                ctx,
+            );
+        }
+    }
+
+    fn start_mux_transfer(
+        &mut self,
+        target: Target,
+        transfer: Transfer,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let upload = matches!(transfer, Transfer::Upload { .. });
+        let label = match &transfer {
+            Transfer::Download { destination, .. } => destination.display().to_string(),
+            Transfer::Upload {
+                source, directory, ..
+            } => format!(
+                "{directory}/{}",
+                source.file_name().unwrap_or_default().to_string_lossy()
+            ),
+        };
+        let title = format!(
+            "{} · {}",
+            if upload { "Upload" } else { "Download" },
+            target.label()
+        );
+        let terminal = self
+            .active_tab_pane_group()
+            .as_ref(ctx)
+            .active_session_view(ctx)
+            .map(|view| view.id())
+            .unwrap_or(self.active_tab_pane_group().id());
+        let id = AgentNotificationsModel::handle(ctx).update(ctx, |model, ctx| {
+            model.add_file_transfer(title, format!("Queued · {label}"), upload, terminal, ctx)
+        });
+        let (tx, rx) = async_channel::bounded(1);
+        let progress_label = label.clone();
+        ctx.spawn_stream_local(
+            crate::throttle::throttle(std::time::Duration::from_millis(250), rx),
+            move |_, (bytes, total): (u64, u64), ctx| {
+                let fraction = if total == 0 {
+                    0.
+                } else {
+                    ((bytes as f64 / total as f64) as f32).min(0.99)
+                };
+                let message = format!(
+                    "{:.0}% · {} / {} bytes · {progress_label}",
+                    fraction * 100.,
+                    bytes,
+                    total
+                );
+                AgentNotificationsModel::handle(ctx).update(ctx, |model, ctx| {
+                    model.update_file_transfer(id, message, Some(fraction), false, ctx)
+                });
+            },
+            |_, _| {},
+        );
+        let key = target.ssh_alias().unwrap_or("").to_owned();
         ctx.spawn(
             async move {
-                if let Some(parent) = destination.parent() {
-                    std::fs::create_dir_all(parent)?;
+                let _slot = TRANSFER_SLOTS.acquire().await?;
+                match transfer {
+                    Transfer::Download {
+                        source,
+                        destination,
+                        total,
+                    } => {
+                        files::download_with_progress(
+                            target.ssh_alias(),
+                            &source,
+                            &destination,
+                            |bytes| {
+                                let _ = tx.try_send((bytes, total));
+                            },
+                        )
+                        .await
+                    }
+                    Transfer::Upload {
+                        source,
+                        base,
+                        directory,
+                    } => {
+                        files::upload(
+                            target.ssh_alias(),
+                            &source,
+                            &base,
+                            &directory,
+                            |bytes, total| {
+                                let _ = tx.try_send((bytes, total));
+                            },
+                        )
+                        .await
+                    }
                 }
-                files::download(target.ssh_alias(), &source, &destination).await
             },
             move |workspace, result, ctx| {
-                workspace.mux_panel.files.downloading = false;
-                let toast = match result {
-                    Ok(()) => DismissibleToast::success(format!("Downloaded to {label}")),
-                    Err(error) => DismissibleToast::error(format!("{error:#}")),
+                let failed = result.is_err();
+                let message = match result {
+                    Ok(()) => format!("Completed · {label}"),
+                    Err(error) => format!("Failed · {label}: {error:#}"),
                 };
-                workspace
-                    .toast_stack
-                    .update(ctx, |view, ctx| view.add_ephemeral_toast(toast, ctx));
+                AgentNotificationsModel::handle(ctx).update(ctx, |model, ctx| {
+                    model.update_file_transfer(id, message, None, failed, ctx)
+                });
+                if upload && !failed {
+                    if let Some(state) = workspace.mux_panel.files.states.get_mut(&key) {
+                        state.dirty = true;
+                    }
+                    if workspace.mux_files_open() && workspace.mux_panel.files.key() == key {
+                        let path = workspace
+                            .mux_panel
+                            .files
+                            .state()
+                            .listing
+                            .as_ref()
+                            .map(|listing| listing.path.clone())
+                            .unwrap_or_default();
+                        workspace.load_mux_directory(path, ctx);
+                    }
+                }
                 ctx.notify();
             },
         );
@@ -307,13 +521,37 @@ impl Workspace {
         );
         let heading = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(8.)
             .with_child(
                 Expanded::new(
                     1.,
-                    mux_text(&title, appearance.ui_font_size(), true, appearance),
+                    Text::new_inline(
+                        title,
+                        appearance.ui_font_family(),
+                        appearance.ui_font_size(),
+                    )
+                    .with_color(appearance.theme().foreground().into())
+                    .with_clip(ClipConfig::ellipsis())
+                    .finish(),
                 )
                 .finish(),
             )
+            .with_child(self.mux_button(
+                "upload-files",
+                button::Content::Label("Upload…".into()),
+                WorkspaceAction::PickMuxUpload,
+                false,
+                files.choosing_upload || state.loading || state.listing.is_none(),
+                appearance,
+            ))
+            .with_child(self.mux_button(
+                "file-transfers",
+                button::Content::Label("Transfers".into()),
+                WorkspaceAction::ShowMuxTransfers,
+                false,
+                false,
+                appearance,
+            ))
             .with_child(self.mux_button(
                 "close-files",
                 button::Content::Icon(Icon::X),
@@ -420,7 +658,7 @@ impl Workspace {
                             .with_child(mux_note(&format!("{} B", entry.size), appearance))
                             .with_child(self.mux_download_button(
                                 &entry.path,
-                                files.downloading || files.choosing_destination || state.loading,
+                                files.choosing_destination || state.loading,
                                 appearance,
                             ))
                             .finish(),
@@ -441,15 +679,9 @@ impl Workspace {
             column.add_child(mux_note("Loading files…", appearance));
         }
         column.add_child(mux_note(
-            "Ctrl-click Download to save directly to Downloads and replace a same-named file.",
+            "Drop files here to upload to this folder. Uploads replace same-named files after success.",
             appearance,
         ));
-        if files.downloading {
-            column.add_child(mux_note(
-                "Downloading… You can close this window while the transfer continues.",
-                appearance,
-            ));
-        }
         if let Some(error) = &state.error {
             column.add_child(mux_note(error, appearance));
         }
@@ -469,10 +701,13 @@ impl Workspace {
             )
             .finish(),
         );
-        let panel = ConstrainedBox::new(mux_dialog_surface(column.finish(), appearance))
-            .with_max_width(760.)
-            .with_max_height(560.)
-            .finish();
+        let panel = super::file_drop::MuxFileDropTarget::new(
+            ConstrainedBox::new(mux_dialog_surface(column.finish(), appearance))
+                .with_max_width(760.)
+                .with_max_height(560.)
+                .finish(),
+        )
+        .finish();
         mux_dialog_overlay(
             Percentage::width(0.85, Percentage::height(0.85, panel).finish()).finish(),
         )

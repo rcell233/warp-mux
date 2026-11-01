@@ -55,8 +55,9 @@ remains inside the selected native terminal.
 ## Automatic SSH reconnection
 
 Managed remote zmx terminals send SSH keepalives every 15 seconds and treat three unanswered
-probes as a lost connection. A transport failure retries the same host/session with delays of
-1, 2, 4, 8, 16, then at most 30 seconds. After a sleep/network interruption, recovery stays in the
+probes as a lost connection. The first transport failure retries the same host/session immediately;
+subsequent failures wait two seconds between attempts, without increasing backoff. An individual
+connection attempt still has an eight-second SSH connection timeout. After a sleep/network interruption, recovery stays in the
 existing tab and reattaches to the same zmx session. Closing the tab cancels the connection; Ctrl-C
 can stop the retry wait. A normal detach/logout or remote-command error does not start retries.
 
@@ -88,7 +89,21 @@ a toast reports its outcome. **Ctrl-click Download** saves to the system Downloa
 without a picker and replaces an existing same-named file after the transfer succeeds. Ordinary
 clicks retain the Save dialog. Directory downloads are not supported.
 
-Listing requires `python3` on the selected host; remote downloads require its SFTP subsystem.
+Use **Upload…** to select one or more local files, or drag files onto the Files panel. Uploads
+target the currently displayed directory on that host, within its base path. They use a separate
+SSH connection and python3, write a temporary file in the destination directory, and replace a
+same-named file only after receiving the entire source and syncing it. Interrupted uploads leave
+an existing destination intact. Folder uploads are not supported. The current listing refreshes
+after uploads; closing Files preserves its location and marks the listing for refresh on reopening.
+
+Uploads and downloads are background tasks, with up to three concurrent transfers and additional
+files queued. Closing Files or changing hosts does not interrupt a transfer or change its captured
+destination. **Transfers** opens the native Notification mailbox, which shows the host, destination,
+byte/percentage progress, completion or error for each task. Upload progress is reported by the
+receiving Python process; download progress tracks bytes written to the temporary local file.
+Progress updates are throttled to keep the interface responsive.
+
+Listing and uploading require `python3` on the selected host; remote downloads require its SFTP subsystem.
 Background SSH/SFTP authentication uses your agent or reusable ControlMaster connection, just
 like zmx discovery. This does not add a password store. The native Project Explorer in this
 upstream revision does not support ordinary SSH sessions, so the floating browser supplies
@@ -135,7 +150,9 @@ cargo clippy --locked --manifest-path tools/mux-tests/Cargo.toml --all-targets -
 
 The production backend is tested independently of the GPU stack. Reconnection scripts are
 tested through the same shell escaping and outer-shell invocation used by a terminal, including
-transport retries, clean exits and literal remote arguments. Tests cover registry
+immediate/two-second transport retries, clean exits and literal remote arguments. Transfer tests
+cover concurrent downloads, received-byte upload progress, literal filenames, confinement to the
+base path, successful replacement, and preservation/cleanup after an incomplete upload. Tests cover registry
 persistence/removal, malformed-file handling, host/window selection isolation, config Includes,
 zmx output, and shell escaping. CI checks the complete GUI, builds DMGs, then verifies disk-image
 integrity and app signatures. Real SSH authentication and mouse/keyboard behavior still require

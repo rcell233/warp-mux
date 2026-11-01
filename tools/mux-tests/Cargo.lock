@@ -30,6 +30,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-fs"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8034a681df4aed8b8edbd7fbe472401ecf009251c8b40556b304567052e294c5"
+dependencies = [
+ "async-lock",
+ "blocking",
+ "futures-lite 2.6.1",
+]
+
+[[package]]
 name = "async-io"
 version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1113,7 +1124,9 @@ name = "warp-mux-backend-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-fs",
  "command",
+ "futures-lite 1.13.0",
  "glob",
  "serde",
  "serde_json",

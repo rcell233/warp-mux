@@ -63,6 +63,60 @@ impl AgentNotificationsModel {
         &self.notifications
     }
 
+    pub(crate) fn add_file_transfer(
+        &mut self,
+        title: String,
+        message: String,
+        upload: bool,
+        terminal_view_id: EntityId,
+        ctx: &mut ModelContext<Self>,
+    ) -> NotificationId {
+        let mut item = NotificationItem::new(
+            title,
+            message,
+            NotificationCategory::Progress,
+            NotificationSourceAgent::FileTransfer { upload },
+            NotificationOrigin::FileTransfer(uuid::Uuid::new_v4()),
+            false,
+            terminal_view_id,
+            Vec::new(),
+            None,
+        );
+        item.transfer_progress = Some(0.);
+        let id = item.id;
+        self.notifications.push(item);
+        ctx.emit(AgentManagementEvent::NotificationAdded { id });
+        id
+    }
+
+    pub(crate) fn update_file_transfer(
+        &mut self,
+        id: NotificationId,
+        message: String,
+        progress: Option<f32>,
+        failed: bool,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        if let Some(item) = self.notifications.get_mut_by_id(id) {
+            if progress.is_some() && item.transfer_progress.is_none() {
+                return;
+            }
+            item.message = message;
+            item.transfer_progress = progress;
+            item.category = if failed {
+                NotificationCategory::Error
+            } else if progress.is_some() {
+                NotificationCategory::Progress
+            } else {
+                NotificationCategory::Complete
+            };
+            if progress.is_none() {
+                item.is_read = false;
+            }
+            ctx.emit(AgentManagementEvent::NotificationUpdated);
+        }
+    }
+
     pub(crate) fn mark_item_read(&mut self, id: NotificationId, ctx: &mut ModelContext<Self>) {
         if self.notifications.mark_item_read(id) {
             ctx.emit(AgentManagementEvent::NotificationUpdated);

@@ -88,3 +88,142 @@ fn quick_download_uses_literal_basename_and_rejects_path_traversal() {
     assert!(download_destination(directory, "/absolute").is_err());
     assert!(download_destination(directory, "..").is_err());
 }
+
+#[test]
+fn upload_reports_received_bytes_and_replaces_file_after_success() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let directory = tempfile::tempdir().unwrap();
+            let source = directory.path().join("report '雪' [*] ; $(bad).bin");
+            let target = directory.path().join("remote");
+            std::fs::create_dir(&target).unwrap();
+            let destination = target.join(source.file_name().unwrap());
+            std::fs::write(&source, vec![0xa5; 2 * 1024 * 1024]).unwrap();
+            std::fs::write(&destination, "previous").unwrap();
+            let mut updates = Vec::new();
+
+            upload(
+                None,
+                &source,
+                target.to_str().unwrap(),
+                target.to_str().unwrap(),
+                |bytes, total| updates.push((bytes, total)),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                std::fs::read(&destination).unwrap(),
+                std::fs::read(source).unwrap()
+            );
+            assert_eq!(updates.first(), Some(&(0, 2097152)));
+            assert!(updates.contains(&(1048576, 2097152)));
+            assert_eq!(updates.last(), Some(&(2097152, 2097152)));
+            assert_eq!(std::fs::read_dir(&target).unwrap().count(), 1);
+        });
+}
+
+#[test]
+fn upload_rejects_destination_outside_base_and_directories() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let directory = tempfile::tempdir().unwrap();
+            let base = directory.path().join("base");
+            std::fs::create_dir(&base).unwrap();
+            let source = base.join("data.txt");
+            let destination = directory.path().join("data.txt");
+            std::fs::write(&source, "new").unwrap();
+            std::fs::write(&destination, "keep").unwrap();
+
+            assert!(
+                upload(
+                    None,
+                    &source,
+                    base.to_str().unwrap(),
+                    directory.path().to_str().unwrap(),
+                    |_, _| {}
+                )
+                .await
+                .is_err()
+            );
+            assert!(
+                upload(
+                    None,
+                    &base,
+                    base.to_str().unwrap(),
+                    base.to_str().unwrap(),
+                    |_, _| {}
+                )
+                .await
+                .is_err()
+            );
+            assert_eq!(std::fs::read_to_string(destination).unwrap(), "keep");
+        });
+}
+
+#[test]
+fn interrupted_upload_preserves_existing_file_and_removes_staging() {
+    let directory = tempfile::tempdir().unwrap();
+    let destination = directory.path().join("data.txt");
+    std::fs::write(&destination, "keep").unwrap();
+    let mut input = tempfile::tempfile().unwrap();
+    input.write_all(b"partial").unwrap();
+    input.rewind().unwrap();
+
+    let output = command::blocking::Command::new("python3")
+        .args([
+            "-c",
+            include_str!("upload_file.py"),
+            directory.path().to_str().unwrap(),
+            directory.path().to_str().unwrap(),
+            "data.txt",
+            "100",
+        ])
+        .stdin(input)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(std::fs::read_to_string(destination).unwrap(), "keep");
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn concurrent_downloads_finish_independently_with_byte_progress() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let directory = tempfile::tempdir().unwrap();
+            let source = directory.path().join("source");
+            let first = directory.path().join("first");
+            let second = directory.path().join("second");
+            std::fs::write(&source, b"independent transfers").unwrap();
+            let mut first_progress = Vec::new();
+            let mut second_progress = Vec::new();
+
+            let (a, b) = futures_lite::future::zip(
+                download_with_progress(None, source.to_str().unwrap(), &first, |bytes| {
+                    first_progress.push(bytes)
+                }),
+                download_with_progress(None, source.to_str().unwrap(), &second, |bytes| {
+                    second_progress.push(bytes)
+                }),
+            )
+            .await;
+
+            a.unwrap();
+            b.unwrap();
+            assert_eq!(std::fs::read(first).unwrap(), b"independent transfers");
+            assert_eq!(std::fs::read(second).unwrap(), b"independent transfers");
+            assert_eq!(first_progress.last(), Some(&21));
+            assert_eq!(second_progress.last(), Some(&21));
+        });
+}
