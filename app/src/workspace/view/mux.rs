@@ -504,6 +504,7 @@ impl Workspace {
                     ),
                     None => format!("command /bin/sh -c {}", shell.shell_escape(&remote)),
                 };
+                view.bind_remote_image_paste(target.ssh_alias(), &command);
                 view.set_pending_command(&command, ctx);
             });
             if let Some(nav) = self.mux_panel.navigation.as_mut() {

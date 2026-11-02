@@ -123,6 +123,18 @@ impl AgentNotificationsModel {
         }
     }
 
+    pub(crate) fn set_transfer_path(
+        &mut self,
+        id: NotificationId,
+        path: String,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        if let Some(item) = self.notifications.get_mut_by_id(id) {
+            item.transfer_path = Some(path);
+            ctx.emit(AgentManagementEvent::NotificationUpdated);
+        }
+    }
+
     pub(crate) fn mark_all_items_read(&mut self, ctx: &mut ModelContext<Self>) {
         if self.notifications.mark_all_items_read() {
             ctx.emit(AgentManagementEvent::AllNotificationsMarkedRead);

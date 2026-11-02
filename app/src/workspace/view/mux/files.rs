@@ -39,8 +39,6 @@ enum Transfer {
     },
 }
 
-static TRANSFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(3);
-
 impl FileBrowser {
     fn key(&self) -> String {
         self.target
@@ -412,7 +410,7 @@ impl Workspace {
         let key = target.ssh_alias().unwrap_or("").to_owned();
         ctx.spawn(
             async move {
-                let _slot = TRANSFER_SLOTS.acquire().await?;
+                let _slot = files::TRANSFER_SLOTS.acquire().await?;
                 match transfer {
                     Transfer::Download {
                         source,

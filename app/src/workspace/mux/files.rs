@@ -12,6 +12,8 @@ use super::core::{quote, valid_host};
 
 const LIST_SCRIPT: &str = include_str!("list_files.py");
 
+pub static TRANSFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(3);
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Entry {
     pub name: String,
@@ -204,52 +206,34 @@ pub async fn upload(
     download_destination(Path::new(directory), name)?;
     let total = metadata.len();
     progress(0, total);
-    let mut command = match host {
-        Some(host) => {
-            if !valid_host(host) {
-                bail!("Invalid SSH host alias");
-            }
-            let mut command = Command::new("/usr/bin/ssh");
-            command.args([
-                "-T",
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "ConnectTimeout=8",
-                "-o",
-                "ServerAliveInterval=15",
-                "-o",
-                "ServerAliveCountMax=3",
-                "-o",
-                "RemoteCommand=none",
-                "--",
-                host,
-            ]);
-            command.arg(format!(
-                "python3 -c {} {} {} {} {}",
-                quote(include_str!("upload_file.py")),
-                quote(base),
-                quote(directory),
-                quote(name),
-                total
-            ));
-            command
-        }
-        None => {
-            let mut command = Command::new("python3");
-            command.args([
-                "-c",
-                include_str!("upload_file.py"),
-                base,
-                directory,
-                name,
-                &total.to_string(),
-            ]);
-            command
-        }
-    };
+    let arguments = [
+        base.to_owned(),
+        directory.to_owned(),
+        name.to_owned(),
+        total.to_string(),
+    ];
     let source = source.to_owned();
     let input = tokio::task::spawn_blocking(move || std::fs::File::open(source)).await??;
+    upload_stream(host, input, &arguments, total, progress).await?;
+    Ok(())
+}
+
+pub(super) async fn upload_stream(
+    host: Option<&str>,
+    input: std::fs::File,
+    arguments: &[String],
+    total: u64,
+    progress: impl FnMut(u64, u64),
+) -> Result<Option<String>> {
+    run_upload(upload_command(host, arguments)?, input, total, progress).await
+}
+
+async fn run_upload(
+    mut command: Command,
+    input: std::fs::File,
+    total: u64,
+    mut progress: impl FnMut(u64, u64),
+) -> Result<Option<String>> {
     let errors = tempfile::NamedTempFile::new()?;
     let mut child = command
         .stdin(input)
@@ -265,10 +249,14 @@ pub async fn upload(
                 .context("Missing upload progress stream")?,
         );
         let mut line = String::new();
+        let mut remote_path = None;
         loop {
             line.clear();
             if reader.read_line(&mut line).await? == 0 {
                 break;
+            }
+            if let Some(path) = line.trim().strip_prefix("__WARP_MUX_FILE__") {
+                remote_path = Some(serde_json::from_str::<String>(path)?);
             }
             if let Some(bytes) = line
                 .trim()
@@ -284,10 +272,46 @@ pub async fn upload(
                 async_fs::read_to_string(errors.path()).await?.trim()
             );
         }
-        Ok(())
+        Ok(remote_path)
     })
     .await
     .context("Upload timed out")?
+}
+
+fn upload_command(host: Option<&str>, arguments: &[String]) -> Result<Command> {
+    Ok(match host {
+        Some(host) => {
+            if !valid_host(host) {
+                bail!("Invalid SSH host alias");
+            }
+            let mut command = Command::new("/usr/bin/ssh");
+            command.args([
+                "-T",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "RemoteCommand=none",
+                "--",
+                host,
+            ]);
+            let args = arguments
+                .iter()
+                .map(|arg| quote(arg))
+                .collect::<Vec<_>>()
+                .join(" ");
+            command.arg(format!(
+                "python3 -c {} {args}",
+                quote(include_str!("upload_file.py"))
+            ));
+            command
+        }
+        None => {
+            let mut command = Command::new("python3");
+            command.args(["-c", include_str!("upload_file.py")]);
+            command.args(arguments);
+            command
+        }
+    })
 }
 
 #[cfg(test)]

@@ -109,6 +109,36 @@ like zmx discovery. This does not add a password store. The native Project Explo
 upstream revision does not support ordinary SSH sessions, so the floating browser supplies
 that path using the saved SSH connection.
 
+## Remote image paste
+
+In a remote zmx terminal opened from the host strip, **Cmd+V** / the terminal's **Paste** action
+uploads clipboard images to that host and pastes the resulting absolute path into the originating
+terminal. Copying image files in Finder or dropping images directly on the terminal uses the same
+flow. Dropping on the Files panel continues to upload into the folder shown there.
+
+This is independent of CLI-agent detection: Codex, Claude Code, and other tools can receive the
+remote path through ordinary bracketed paste. The CLI decides whether to turn it into an attachment
+or read it as a file. No Enter is sent. Local terminal pasting keeps its existing behavior.
+
+Transfers use the SSH config alias, including its ProxyJump/ProxyCommand and connection settings,
+and require noninteractive SSH authentication and `python3` on the final host. The background
+upload no longer overrides the host's ConnectTimeout. Transfers have an overall one-hour timeout.
+Each terminal's images are uploaded and delivered in order, sharing the three-transfer limit
+with Files. Notifications show progress and provide **Copy path** on completion. Uploads continue
+if the originating tab closes. If focus, user input, or the originating command has changed,
+or bracketed paste is unavailable, the path is kept in the notification for manual pasting.
+
+Images use unique private directories under `~/.cache/warp-mux/paste/` on the remote host
+(or `$XDG_CACHE_HOME/warp-mux/paste/` when set to an absolute path). Directories are mode 0700;
+images are mode 0600. An incomplete transfer removes its partial file. Successful images remain
+across terminal closure and reconnects so agents can read them later; remove old image directories
+explicitly after finishing those conversations. They never use the Files panel's current directory.
+
+PNG, JPEG, GIF, and WebP are supported; macOS clipboard TIFF is converted to PNG in the background.
+Images are limited to 32 MiB each, with at most 20 pending images and 64 MiB of queued clipboard
+data per terminal. Manually nesting another SSH connection or entering a container with a separate
+filesystem is not automatically detected: use a host tab for the final SSH target or a shared path.
+
 ## Download
 
 [Warp Mux macOS Actions](https://github.com/rcell233/warp-mux/actions/workflows/mux-macos.yml)
@@ -152,7 +182,9 @@ The production backend is tested independently of the GPU stack. Reconnection sc
 tested through the same shell escaping and outer-shell invocation used by a terminal, including
 immediate/two-second transport retries, clean exits and literal remote arguments. Transfer tests
 cover concurrent downloads, received-byte upload progress, literal filenames, confinement to the
-base path, successful replacement, and preservation/cleanup after an incomplete upload. Tests cover registry
+base path, successful replacement, and preservation/cleanup after an incomplete upload. Image paste tests
+cover private cache permissions, unique paths, interrupted-upload cleanup, literal path quoting,
+invalid/oversized inputs, and preservation of SSH transport configuration. Tests cover registry
 persistence/removal, malformed-file handling, host/window selection isolation, config Includes,
 zmx output, and shell escaping. CI checks the complete GUI, builds DMGs, then verifies disk-image
 integrity and app signatures. Real SSH authentication and mouse/keyboard behavior still require

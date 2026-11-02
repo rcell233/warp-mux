@@ -1,6 +1,111 @@
 use super::*;
 
 #[test]
+fn image_upload_returns_a_private_remote_file_without_overwriting_previous_pastes() {
+    use std::os::unix::fs::PermissionsExt;
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let cache = tempfile::tempdir().unwrap();
+            let input = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(input.path(), b"clipboard bytes").unwrap();
+            let arguments = ["--clipboard".into(), "png".into(), "15".into()];
+            let mut first = upload_command(None, &arguments).unwrap();
+            first.env("XDG_CACHE_HOME", cache.path());
+            let mut progress = Vec::new();
+            let path = run_upload(first, input.reopen().unwrap(), 15, |bytes, _| {
+                progress.push(bytes)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+            let mut second = upload_command(None, &arguments).unwrap();
+            second.env("XDG_CACHE_HOME", cache.path());
+            let other = run_upload(second, input.reopen().unwrap(), 15, |_, _| {})
+                .await
+                .unwrap()
+                .unwrap();
+
+            assert_ne!(path, other);
+            assert_eq!(std::fs::read(&path).unwrap(), b"clipboard bytes");
+            assert_eq!(std::fs::read(&other).unwrap(), b"clipboard bytes");
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                std::fs::metadata(Path::new(&path).parent().unwrap())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+            assert_eq!(progress.last(), Some(&15));
+        });
+}
+
+#[test]
+fn incomplete_image_upload_leaves_no_path_or_partial_image() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let cache = tempfile::tempdir().unwrap();
+            let input = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(input.path(), b"partial").unwrap();
+            let mut command =
+                upload_command(None, &["--clipboard".into(), "png".into(), "100".into()]).unwrap();
+            command.env("XDG_CACHE_HOME", cache.path());
+
+            assert!(
+                run_upload(command, input.reopen().unwrap(), 100, |_, _| {})
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                std::fs::read_dir(cache.path().join("warp-mux/paste"))
+                    .unwrap()
+                    .count(),
+                0
+            );
+        });
+}
+
+#[test]
+fn upload_uses_host_alias_without_overriding_jump_transport_settings() {
+    let command = upload_command(
+        Some("IceLand"),
+        &["--clipboard".into(), "png".into(), "10".into()],
+    )
+    .unwrap();
+    let args: Vec<_> = command
+        .get_args()
+        .map(|arg| arg.to_str().unwrap())
+        .collect();
+
+    assert_eq!(
+        &args[..7],
+        &[
+            "-T",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "RemoteCommand=none",
+            "--",
+            "IceLand"
+        ]
+    );
+    assert!(args.last().unwrap().starts_with("python3 -c "));
+    assert!(!args.iter().any(|arg| arg.starts_with("ConnectTimeout=")
+        || arg.starts_with("ProxyJump=")
+        || arg.starts_with("ProxyCommand=")));
+}
+
+#[test]
 fn listing_resolves_base_and_confines_navigation() {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

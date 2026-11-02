@@ -145,6 +145,38 @@ pub(crate) fn render_notification_item_content(
             .finish();
     }
 
+    if let Some(path) = &item.transfer_path {
+        let path = path.clone();
+        let copy = appearance
+            .ui_builder()
+            .wrappable_text("Copy path".to_owned(), false)
+            .with_style(UiComponentStyles {
+                font_color: Some(theme.accent().into()),
+                font_size: Some(appearance.ui_font_size()),
+                ..Default::default()
+            })
+            .build()
+            .finish();
+        text_column = Flex::column()
+            .with_cross_axis_alignment(CrossAxisAlignment::Start)
+            .with_child(text_column)
+            .with_child(
+                Container::new(
+                    EventHandler::new(copy)
+                        .on_left_mouse_down(move |ctx, _, _| {
+                            ctx.dispatch_typed_action(WorkspaceAction::CopyTextToClipboard(
+                                path.clone(),
+                            ));
+                            DispatchEventResult::StopPropagation
+                        })
+                        .finish(),
+                )
+                .with_margin_top(8.)
+                .finish(),
+            )
+            .finish();
+    }
+
     Flex::row()
         .with_cross_axis_alignment(CrossAxisAlignment::Start)
         .with_main_axis_size(MainAxisSize::Max)

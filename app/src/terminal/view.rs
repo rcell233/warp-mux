@@ -38,6 +38,8 @@ mod passive_suggestions;
 mod pending_user_query;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod plugin_instructions_block;
+#[cfg(target_os = "macos")]
+mod remote_image_paste;
 pub mod rich_content;
 mod shared_session;
 mod shell_terminated_banner;
@@ -2520,6 +2522,8 @@ struct LocalSessionCanonicalPwdCache {
 pub struct TerminalView {
     pub model: Arc<FairMutex<TerminalModel>>,
     view_handle: WeakViewHandle<Self>,
+    #[cfg(target_os = "macos")]
+    remote_image_paste: remote_image_paste::RemoteImagePaste,
 
     /// The session's size data. This is wrapped in a [`Tracked`] to
     /// guarantee that the [`TerminalView`] is redrawn whenever the
@@ -4380,6 +4384,8 @@ impl TerminalView {
             input,
             inline_menu_positioner,
             view_handle: ctx.handle(),
+            #[cfg(target_os = "macos")]
+            remote_image_paste: Default::default(),
             size_info: size_info.into(),
             snackbar_header_state: Default::default(),
             colors,
@@ -8826,6 +8832,11 @@ impl TerminalView {
     }
 
     fn maybe_report_focus_out(&mut self, ctx: &mut ViewContext<Self>) {
+        #[cfg(target_os = "macos")]
+        if self.is_focused_and_active {
+            self.remote_image_paste.input_revision =
+                self.remote_image_paste.input_revision.wrapping_add(1);
+        }
         if self.should_report_focus(ctx) && self.is_focused_and_active {
             self.write_to_pty(EscCodes::FOCUS_OUT, ctx);
         }
@@ -9933,6 +9944,11 @@ impl TerminalView {
         selected_range: &Range<usize>,
         ctx: &mut ViewContext<Self>,
     ) {
+        #[cfg(target_os = "macos")]
+        {
+            self.remote_image_paste.input_revision =
+                self.remote_image_paste.input_revision.wrapping_add(1);
+        }
         if !FeatureFlag::ImeMarkedText.is_enabled() {
             return;
         }
@@ -10035,6 +10051,11 @@ impl TerminalView {
 
         let bytes = data.into();
         let bytes_vec = bytes.to_vec();
+        #[cfg(target_os = "macos")]
+        {
+            self.remote_image_paste.input_revision =
+                self.remote_image_paste.input_revision.wrapping_add(1);
+        }
         self.clear_selected_blocks(ctx);
         self.update_scroll_position_locking(ScrollPositionUpdate::AfterWriteUserBytesToPty, ctx);
         self.write_to_pty(bytes, ctx);
@@ -17427,6 +17448,12 @@ impl TerminalView {
             TerminalView::middle_click_paste_content(shell_family, ctx)
         } else {
             let clipboard_content = ctx.clipboard().read();
+
+            #[cfg(target_os = "macos")]
+            if !should_paste_in_input && self.paste_remote_clipboard_images(&clipboard_content, ctx)
+            {
+                return;
+            }
 
             if is_cli_agent_paste && clipboard_content.has_image_data() {
                 if !cfg!(windows) {
@@ -27045,6 +27072,14 @@ impl TerminalView {
             .is_active_and_long_running();
 
         let image_filepaths = get_image_filepaths_from_paths(paths);
+
+        #[cfg(target_os = "macos")]
+        if !image_filepaths.is_empty()
+            && image_filepaths.len() == paths.len()
+            && self.paste_remote_image_files(&image_filepaths, ctx)
+        {
+            return;
+        }
 
         // CLI-agent paste path: when a CLI agent (e.g. Claude Code) is the
         // foreground long-running process and the user is interacting with its

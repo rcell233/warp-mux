@@ -95,6 +95,7 @@ pub struct NotificationItem {
     /// When absent, it falls back to the "simple" layout.
     pub branch: Option<String>,
     pub transfer_progress: Option<f32>,
+    pub transfer_path: Option<String>,
 }
 
 impl NotificationItem {
@@ -132,6 +133,7 @@ impl NotificationItem {
             artifacts,
             branch,
             transfer_progress: None,
+            transfer_path: None,
         }
     }
 }
