@@ -178,7 +178,7 @@ impl TerminalView {
                     .await
                 },
                 move |model, result: anyhow::Result<String>, ctx| {
-                    let target = terminal.upgrade();
+                    let target = terminal.upgrade(ctx);
                     if let Some(target) = &target {
                         let _ = target.try_update(ctx, |view, _| {
                             view.remote_image_paste.pending =
