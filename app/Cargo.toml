@@ -1093,3 +1093,6 @@ short_description = "The cloud-backed terminal for individuals and teams, develo
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["embed_plist"]
+
+[target.'cfg(target_os = "macos")'.dependencies.glob]
+version = "=0.3.1"

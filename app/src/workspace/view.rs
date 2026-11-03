@@ -12,6 +12,8 @@ pub(crate) mod free_ai_removal_modal;
 pub mod global_search;
 pub(crate) mod launch_modal;
 pub(crate) mod left_panel;
+#[cfg(target_os = "macos")]
+mod mux;
 pub(crate) mod onboarding;
 pub(crate) mod openwarp_launch_modal;
 pub(crate) mod orchestration_launch_modal;
@@ -1197,6 +1199,8 @@ pub struct Workspace {
     left_panel_open: bool,
     vertical_tabs_panel_open: bool,
     vertical_tabs_panel: VerticalTabsPanelState,
+    #[cfg(target_os = "macos")]
+    mux_panel: mux::MuxPanelState,
     left_panel_view: ViewHandle<LeftPanelView>,
     left_panel_views: Vec<ToolPanelView>,
     right_panel_view: ViewHandle<RightPanelView>,
@@ -3158,41 +3162,42 @@ impl Workspace {
             me.handle_agent_management_view_event(event, ctx);
         });
 
-        let notification_mailbox_view = if FeatureFlag::HOANotifications.is_enabled() {
-            let view = ctx.add_typed_action_view(NotificationMailboxView::new);
-            ctx.subscribe_to_view(&view, move |me, _, event, ctx| match event {
-                NotificationMailboxViewEvent::NavigateToTerminal {
-                    terminal_view_id, ..
-                } => {
-                    me.current_workspace_state.is_notification_mailbox_open = false;
-                    me.tab_bar_pinned_by_popup = false;
-                    me.sync_window_button_visibility(ctx);
-                    if let Some(stack) = &me.notification_toast_stack {
-                        stack.update(ctx, |stack, ctx| stack.set_mailbox_open(false, ctx));
+        let notification_mailbox_view =
+            if cfg!(target_os = "macos") || FeatureFlag::HOANotifications.is_enabled() {
+                let view = ctx.add_typed_action_view(NotificationMailboxView::new);
+                ctx.subscribe_to_view(&view, move |me, _, event, ctx| match event {
+                    NotificationMailboxViewEvent::NavigateToTerminal {
+                        terminal_view_id, ..
+                    } => {
+                        me.current_workspace_state.is_notification_mailbox_open = false;
+                        me.tab_bar_pinned_by_popup = false;
+                        me.sync_window_button_visibility(ctx);
+                        if let Some(stack) = &me.notification_toast_stack {
+                            stack.update(ctx, |stack, ctx| stack.set_mailbox_open(false, ctx));
+                        }
+                        me.handle_action(
+                            &WorkspaceAction::FocusTerminalViewInWorkspace {
+                                terminal_view_id: *terminal_view_id,
+                            },
+                            ctx,
+                        );
+                        ctx.notify();
                     }
-                    me.handle_action(
-                        &WorkspaceAction::FocusTerminalViewInWorkspace {
-                            terminal_view_id: *terminal_view_id,
-                        },
-                        ctx,
-                    );
-                    ctx.notify();
-                }
-                NotificationMailboxViewEvent::Dismissed => {
-                    me.current_workspace_state.is_notification_mailbox_open = false;
-                    me.tab_bar_pinned_by_popup = false;
-                    me.sync_window_button_visibility(ctx);
-                    if let Some(stack) = &me.notification_toast_stack {
-                        stack.update(ctx, |stack, ctx| stack.set_mailbox_open(false, ctx));
+                    NotificationMailboxViewEvent::Dismissed => {
+                        me.current_workspace_state.is_notification_mailbox_open = false;
+                        me.tab_bar_pinned_by_popup = false;
+                        me.sync_window_button_visibility(ctx);
+                        if let Some(stack) = &me.notification_toast_stack {
+                            stack.update(ctx, |stack, ctx| stack.set_mailbox_open(false, ctx));
+                        }
+                        me.focus_active_tab(ctx);
+                        ctx.notify();
                     }
-                    me.focus_active_tab(ctx);
-                    ctx.notify();
-                }
-            });
-            Some(view)
-        } else {
-            None
-        };
+                });
+                Some(view)
+            } else {
+                None
+            };
 
         let notification_toast_stack = if FeatureFlag::HOANotifications.is_enabled() {
             Some(ctx.add_typed_action_view(AgentNotificationToastStack::new))
@@ -3544,6 +3549,8 @@ impl Workspace {
             left_panel_open: false,
             vertical_tabs_panel_open: false,
             vertical_tabs_panel: Default::default(),
+            #[cfg(target_os = "macos")]
+            mux_panel: Default::default(),
             left_panel_view,
             left_panel_views,
             right_panel_view,
@@ -3606,6 +3613,8 @@ impl Workspace {
         };
 
         ws.configure_new_workspace(workspace_setting, ctx);
+        #[cfg(target_os = "macos")]
+        ws.initialize_mux(ctx);
         ws.sync_panel_positions_from_config(ctx);
         ws.sync_window_button_visibility(ctx);
         ws.update_titlebar_height(ctx);
@@ -5603,6 +5612,10 @@ impl Workspace {
         };
 
         self.active_tab_index = index;
+        #[cfg(target_os = "macos")]
+        if let Some(native) = self.tabs.get(index).map(|tab| tab.pane_group.id()) {
+            self.observe_mux_native_tab(native);
+        }
 
         // The range selection's anchor is the active tab, so any change to
         // the active tab makes the existing selection stale; clear it.
@@ -12342,6 +12355,8 @@ impl Workspace {
         }
 
         let tab_data = self.tabs.remove(index);
+        #[cfg(target_os = "macos")]
+        self.forget_mux_native_tab(tab_data.pane_group.id());
 
         let removed_pane_group_id = tab_data.pane_group.id();
         self.tab_mru_order.retain(|id| *id != removed_pane_group_id);
@@ -13153,6 +13168,8 @@ impl Workspace {
             self.new_tab_index_and_group(ctx)
         };
         self.tabs.insert(insert_idx, TabData::new(new_pane_group));
+        #[cfg(target_os = "macos")]
+        self.register_mux_native_tab(self.tabs[insert_idx].pane_group.id());
         self.tab_mru_order
             .push(self.tabs[insert_idx].pane_group.id());
         self.activate_tab_internal(insert_idx, ctx);
@@ -14550,6 +14567,9 @@ impl Workspace {
 
     /// How to render the tab bar.
     fn tab_bar_mode(&self, app: &AppContext) -> ShowTabBar {
+        if cfg!(target_os = "macos") {
+            return ShowTabBar::Stacked;
+        }
         // Drag-preview windows always show the tab bar inline; the user
         // is literally holding the tab they detached, so it must remain
         // visible regardless of the user's hover/fullscreen settings.
@@ -21351,123 +21371,133 @@ impl Workspace {
             })
             .finish();
         } else {
-            // Copy from our saved tab_bar_state to ensure all tabs get rendered with the same state
-            let active_tab_index = if FeatureFlag::AgentManagementView.is_enabled()
-                && self.current_workspace_state.is_agent_management_view_open
+            #[cfg(target_os = "macos")]
+            self.add_mux_host_tabs(&mut tab_bar, hover_fixed_width, ctx);
+            #[cfg(not(target_os = "macos"))]
             {
-                None
-            } else {
-                Some(self.active_tab_index)
-            };
-
-            let drag_model = CrossWindowTabDrag::as_ref(ctx);
-            let is_any_group_dragging = self
-                .tab_groups
-                .values()
-                .any(|g| g.draggable_state.is_dragging());
-            let tab_bar_state = TabBarState {
-                tab_count: self.tabs.len(),
-                active_tab_index,
-                is_any_tab_renaming: self.current_workspace_state.is_tab_being_renamed(),
-                is_any_tab_dragging: self.current_workspace_state.is_tab_being_dragged
-                    || drag_model.is_active()
-                    || is_any_group_dragging,
-                hover_fixed_width,
-            };
-            // The detached-placeholder slot in this (source) window is
-            // collapsed to zero width only while the dragged tab is actually
-            // away (floating in the preview, or ghosted / handed off to
-            // another window). While the cursor is back over this window's own
-            // tab bar the placeholder is reordered in place like an in-window
-            // drag and must stay full width, otherwise the drop zone vanishes
-            // and the slot oscillates ("fuzzy shake"). See
-            // `CrossWindowTabDrag::collapsed_source_placeholder_index`.
-            let transferred_tab_index =
-                drag_model.collapsed_source_placeholder_index(self.window_id);
-            // Ghost state for cross-window drag hovering over this tab bar.
-            let ghost = drag_model.ghost_state_for_window(self.window_id);
-
-            // Collapse tabs into render slots: each ungrouped tab is a
-            // `Single`, and each contiguous run of same-group tabs is one
-            // `Group`.
-            let slots = self.tab_bar_slots();
-
-            // Render each slot in the tab bar, either an individual tab or tab group.
-            for slot in &slots {
-                let start_index = match slot {
-                    TabBarSlot::Single { index } => *index,
-                    TabBarSlot::Group { first_index, .. } => *first_index,
-                };
-                // Insert ghost slot before this slot's first tab if the drag
-                // would land here.
-                if ghost
-                    .as_ref()
-                    .is_some_and(|g| g.insertion_index == start_index)
+                // Copy from our saved tab_bar_state to ensure all tabs get rendered with the same state
+                let active_tab_index = if FeatureFlag::AgentManagementView.is_enabled()
+                    && self.current_workspace_state.is_agent_management_view_open
                 {
-                    tab_bar.add_child(self.render_ghost_tab_slot(appearance, ctx));
-                }
+                    None
+                } else {
+                    Some(self.active_tab_index)
+                };
 
-                match slot {
-                    TabBarSlot::Group {
-                        group_id,
-                        first_index,
-                        run_len,
-                    } => {
-                        // Ungrouped insertion just before the group; a drop into
-                        // the group highlights the group itself instead.
-                        if show_before_indicator(self.hovered_tab_index, *first_index, None) {
-                            tab_bar.add_child(self.render_tab_hover_indicator(appearance));
-                        }
-                        // Filtered above; the group must exist in `tab_groups`.
-                        let group = self.tab_groups[group_id].clone();
-                        tab_bar.add_child(self.render_horizontal_tab_group(
-                            &group,
-                            *first_index,
-                            *run_len,
-                            tab_bar_state,
-                            *first_index == 0,
-                            appearance,
-                            ctx,
-                        ));
+                let drag_model = CrossWindowTabDrag::as_ref(ctx);
+                let is_any_group_dragging = self
+                    .tab_groups
+                    .values()
+                    .any(|g| g.draggable_state.is_dragging());
+                let tab_bar_state = TabBarState {
+                    tab_count: self.tabs.len(),
+                    active_tab_index,
+                    is_any_tab_renaming: self.current_workspace_state.is_tab_being_renamed(),
+                    is_any_tab_dragging: self.current_workspace_state.is_tab_being_dragged
+                        || drag_model.is_active()
+                        || is_any_group_dragging,
+                    hover_fixed_width,
+                };
+                // The detached-placeholder slot in this (source) window is
+                // collapsed to zero width only while the dragged tab is actually
+                // away (floating in the preview, or ghosted / handed off to
+                // another window). While the cursor is back over this window's own
+                // tab bar the placeholder is reordered in place like an in-window
+                // drag and must stay full width, otherwise the drop zone vanishes
+                // and the slot oscillates ("fuzzy shake"). See
+                // `CrossWindowTabDrag::collapsed_source_placeholder_index`.
+                let transferred_tab_index =
+                    drag_model.collapsed_source_placeholder_index(self.window_id);
+                // Ghost state for cross-window drag hovering over this tab bar.
+                let ghost = drag_model.ghost_state_for_window(self.window_id);
+
+                // Collapse tabs into render slots: each ungrouped tab is a
+                // `Single`, and each contiguous run of same-group tabs is one
+                // `Group`.
+                let slots = self.tab_bar_slots();
+
+                // Render each slot in the tab bar, either an individual tab or tab group.
+                for slot in &slots {
+                    let start_index = match slot {
+                        TabBarSlot::Single { index } => *index,
+                        TabBarSlot::Group { first_index, .. } => *first_index,
+                    };
+                    // Insert ghost slot before this slot's first tab if the drag
+                    // would land here.
+                    if ghost
+                        .as_ref()
+                        .is_some_and(|g| g.insertion_index == start_index)
+                    {
+                        tab_bar.add_child(self.render_ghost_tab_slot(appearance, ctx));
                     }
-                    TabBarSlot::Single { index } => {
-                        let i = *index;
-                        let is_transferred = transferred_tab_index == Some(i);
-                        // Single tabs are ungrouped, so their before-indicator
-                        // only matches an ungrouped insertion.
-                        if !is_transferred && show_before_indicator(self.hovered_tab_index, i, None)
-                        {
-                            tab_bar.add_child(self.render_tab_hover_indicator(appearance));
+
+                    match slot {
+                        TabBarSlot::Group {
+                            group_id,
+                            first_index,
+                            run_len,
+                        } => {
+                            // Ungrouped insertion just before the group; a drop into
+                            // the group highlights the group itself instead.
+                            if show_before_indicator(self.hovered_tab_index, *first_index, None) {
+                                tab_bar.add_child(self.render_tab_hover_indicator(appearance));
+                            }
+                            // Filtered above; the group must exist in `tab_groups`.
+                            let group = self.tab_groups[group_id].clone();
+                            tab_bar.add_child(self.render_horizontal_tab_group(
+                                &group,
+                                *first_index,
+                                *run_len,
+                                tab_bar_state,
+                                *first_index == 0,
+                                appearance,
+                                ctx,
+                            ));
                         }
-                        if is_transferred {
-                            tab_bar.add_child(
-                                ConstrainedBox::new(self.render_tab_in_tab_bar(
+                        TabBarSlot::Single { index } => {
+                            let i = *index;
+                            let is_transferred = transferred_tab_index == Some(i);
+                            // Single tabs are ungrouped, so their before-indicator
+                            // only matches an ungrouped insertion.
+                            if !is_transferred
+                                && show_before_indicator(self.hovered_tab_index, i, None)
+                            {
+                                tab_bar.add_child(self.render_tab_hover_indicator(appearance));
+                            }
+                            if is_transferred {
+                                tab_bar.add_child(
+                                    ConstrainedBox::new(self.render_tab_in_tab_bar(
+                                        i,
+                                        tab_bar_state,
+                                        ctx,
+                                    ))
+                                    .with_width(0.)
+                                    .finish(),
+                                );
+                            } else {
+                                tab_bar.add_child(self.render_tab_in_tab_bar(
                                     i,
                                     tab_bar_state,
                                     ctx,
-                                ))
-                                .with_width(0.)
-                                .finish(),
-                            );
-                        } else {
-                            tab_bar.add_child(self.render_tab_in_tab_bar(i, tab_bar_state, ctx));
+                                ));
+                            }
                         }
                     }
                 }
-            }
 
-            // Fencepost: ghost slot or hover indicator after all tabs.
-            if ghost
-                .as_ref()
-                .is_some_and(|g| g.insertion_index == self.tabs.len())
-            {
-                tab_bar.add_child(self.render_ghost_tab_slot(appearance, ctx));
-            } else if show_before_indicator(self.hovered_tab_index, self.tabs.len(), None) {
-                tab_bar.add_child(self.render_tab_hover_indicator(appearance));
-            }
+                // Fencepost: ghost slot or hover indicator after all tabs.
+                if ghost
+                    .as_ref()
+                    .is_some_and(|g| g.insertion_index == self.tabs.len())
+                {
+                    tab_bar.add_child(self.render_ghost_tab_slot(appearance, ctx));
+                } else if show_before_indicator(self.hovered_tab_index, self.tabs.len(), None) {
+                    tab_bar.add_child(self.render_tab_hover_indicator(appearance));
+                }
 
-            if ContextFlag::CreateNewSession.is_enabled() {
-                tab_bar.add_child(self.render_new_session_button(ctx));
+                if ContextFlag::CreateNewSession.is_enabled() {
+                    tab_bar.add_child(self.render_new_session_button(ctx));
+                }
             }
         }
 
@@ -23119,6 +23149,9 @@ impl Workspace {
         }
         match item {
             HeaderToolbarItemKind::TabsPanel => {
+                if cfg!(target_os = "macos") {
+                    return None;
+                }
                 if !self.vertical_tabs_panel_open {
                     return None;
                 }
@@ -23131,6 +23164,11 @@ impl Workspace {
                 )
             }
             HeaderToolbarItemKind::ToolsPanel => {
+                if cfg!(target_os = "macos")
+                    && self.left_panel_view.as_ref(app).is_file_tree_active()
+                {
+                    return None;
+                }
                 if !pane_group.left_panel_open || warpui::platform::is_mobile_device() {
                     return None;
                 }
@@ -24038,6 +24076,11 @@ impl Workspace {
     }
 
     fn open_left_panel_view(&mut self, action: &LeftPanelAction, ctx: &mut ViewContext<Self>) {
+        #[cfg(target_os = "macos")]
+        if matches!(action, LeftPanelAction::ProjectExplorer) {
+            self.open_mux_files(ctx);
+            return;
+        }
         if !self.active_tab_pane_group().as_ref(ctx).left_panel_open {
             self.toggle_left_panel(ctx);
         }
@@ -24177,17 +24220,99 @@ impl TypedActionView for Workspace {
             return;
         }
 
+        #[cfg(target_os = "macos")]
+        if self.mux_dialog_open()
+            && matches!(
+                action,
+                CloseActiveTab | ActivatePrevTab | ActivateNextTab | ActivateTabByNumber(_)
+            )
+        {
+            self.show_mux_dialog(None, ctx);
+            return;
+        }
+
         match action {
+            #[cfg(target_os = "macos")]
+            ImportMuxHosts => self.show_mux_dialog(Some(mux::MuxDialog::ImportHosts), ctx),
+            #[cfg(target_os = "macos")]
+            ShowMuxFiles => self.open_mux_files(ctx),
+            #[cfg(target_os = "macos")]
+            ApplyMuxBasePath => self.apply_mux_base_path(ctx),
+            #[cfg(target_os = "macos")]
+            OpenMuxDirectory(path) => self.load_mux_directory(path.clone(), ctx),
+            #[cfg(target_os = "macos")]
+            DownloadMuxFile(path) => self.download_mux_file(path.clone(), false, ctx),
+            #[cfg(target_os = "macos")]
+            QuickDownloadMuxFile(path) => self.download_mux_file(path.clone(), true, ctx),
+            #[cfg(target_os = "macos")]
+            PickMuxUpload => self.pick_mux_upload(ctx),
+            #[cfg(target_os = "macos")]
+            UploadMuxFiles(paths) => self.drop_mux_uploads(paths.clone(), ctx),
+            #[cfg(target_os = "macos")]
+            ShowMuxTransfers => {
+                self.show_mux_dialog(None, ctx);
+                if !self.current_workspace_state.is_notification_mailbox_open {
+                    self.handle_action(
+                        &ToggleNotificationMailbox {
+                            select_first: false,
+                        },
+                        ctx,
+                    );
+                }
+            }
+            #[cfg(target_os = "macos")]
+            ShowMuxNewHost => self.show_mux_dialog(Some(mux::MuxDialog::NewHost), ctx),
+            #[cfg(target_os = "macos")]
+            ShowMuxNewWindow => self.show_mux_dialog(Some(mux::MuxDialog::NewWindow), ctx),
+            #[cfg(target_os = "macos")]
+            CreateMuxWindow => self.create_mux_window(ctx),
+            #[cfg(target_os = "macos")]
+            ShowMuxManageHosts => self.show_mux_dialog(Some(mux::MuxDialog::ManageHosts), ctx),
+            #[cfg(target_os = "macos")]
+            DismissMuxDialog => self.show_mux_dialog(None, ctx),
+            #[cfg(target_os = "macos")]
+            SaveMuxSelectedHosts => self.save_mux_hosts(None, ctx),
+            #[cfg(target_os = "macos")]
+            ToggleMuxCandidate(alias) => self.toggle_mux_candidate(alias, ctx),
+            #[cfg(target_os = "macos")]
+            RemoveMuxSavedHost(alias) => self.save_mux_hosts(Some(alias), ctx),
+            #[cfg(target_os = "macos")]
+            CreateMuxHost(alias) => self.create_mux_host(alias.as_deref(), ctx),
+            #[cfg(target_os = "macos")]
+            ActivateMuxHost(host) => self.activate_mux_host(*host, ctx),
+            #[cfg(target_os = "macos")]
+            CloseMuxHost(host) => self.close_mux_host(*host, ctx),
+            #[cfg(target_os = "macos")]
+            RefreshMuxHost(host) => self.refresh_mux_host(*host, ctx),
+            #[cfg(target_os = "macos")]
+            AuthenticateMuxHost(host) => self.authenticate_mux_host(*host, ctx),
+            #[cfg(target_os = "macos")]
+            OpenMuxSession { host, session } => self.open_mux_session(*host, session, ctx),
             ActivateTab(index) => self.activate_tab(*index, ctx),
-            ActivateTabByNumber(num) => self.activate_tab(num.saturating_sub(1), ctx),
+            ActivateTabByNumber(num) => {
+                #[cfg(target_os = "macos")]
+                self.select_mux_host_number(*num, ctx);
+                #[cfg(not(target_os = "macos"))]
+                self.activate_tab(num.saturating_sub(1), ctx);
+            }
             SetTabShortcutModifierKey { key_code, pressed } => {
                 TabShortcutModifierState::handle(ctx).update(ctx, |state, ctx| {
                     state.set_key_held(*key_code, *pressed, ctx);
                 });
             }
-            ActivatePrevTab => self.activate_prev_tab(ctx),
+            ActivatePrevTab => {
+                #[cfg(target_os = "macos")]
+                self.cycle_mux_host(false, ctx);
+                #[cfg(not(target_os = "macos"))]
+                self.activate_prev_tab(ctx);
+            }
             OpenLaunchConfigSaveModal => self.open_launch_config_save_modal(ctx),
-            ActivateNextTab => self.activate_next_tab(ctx),
+            ActivateNextTab => {
+                #[cfg(target_os = "macos")]
+                self.cycle_mux_host(true, ctx);
+                #[cfg(not(target_os = "macos"))]
+                self.activate_next_tab(ctx);
+            }
             ActivateLastTab => self.activate_last_tab(ctx),
             CyclePrevSession => self.cycle_prev_session(ctx),
             CycleNextSession => self.cycle_next_session(ctx),
@@ -24273,7 +24398,12 @@ impl TypedActionView for Workspace {
             ToggleBlockSnackbar => self.toggle_block_snackbar(ctx),
             ToggleWelcomeTips => self.toggle_welcome_tips_visiblity(ctx),
             CloseTab(index) => self.close_tab(*index, false, true, ctx),
-            CloseActiveTab => self.close_tab(self.active_tab_index, false, true, ctx),
+            CloseActiveTab => {
+                #[cfg(target_os = "macos")]
+                self.close_selected_mux_host(ctx);
+                #[cfg(not(target_os = "macos"))]
+                self.close_tab(self.active_tab_index, false, true, ctx);
+            }
             CloseOtherTabs(index) => self.close_other_tabs(*index, false, ctx),
             CloseNonActiveTabs => self.close_other_tabs(self.active_tab_index, false, ctx),
             CloseTabsRight(index) => {
@@ -24344,6 +24474,9 @@ impl TypedActionView for Workspace {
                     self.unpin_tab_group(group_id, ctx);
                 }
             }
+            #[cfg(target_os = "macos")]
+            AddDefaultTab => self.show_mux_dialog(Some(mux::MuxDialog::NewHost), ctx),
+            #[cfg(not(target_os = "macos"))]
             AddDefaultTab => {
                 let effective_mode = AISettings::as_ref(ctx).default_session_mode(ctx);
                 match effective_mode {
@@ -24939,6 +25072,11 @@ impl TypedActionView for Workspace {
                 }
             }
             ToggleLeftPanel => {
+                #[cfg(target_os = "macos")]
+                if self.left_panel_view.as_ref(ctx).is_file_tree_active() {
+                    self.open_mux_files(ctx);
+                    return;
+                }
                 let active_pane_group = self.active_tab_pane_group().clone();
                 let was_open = active_pane_group.read(ctx, |pg, _| pg.left_panel_open);
 
@@ -25044,8 +25182,9 @@ impl TypedActionView for Workspace {
                 }
             }
             ToggleNotificationMailbox { select_first } => {
-                if FeatureFlag::HOANotifications.is_enabled()
-                    && *AISettings::as_ref(ctx).show_agent_notifications
+                if cfg!(target_os = "macos")
+                    || (FeatureFlag::HOANotifications.is_enabled()
+                        && *AISettings::as_ref(ctx).show_agent_notifications)
                 {
                     let opening = !self.current_workspace_state.is_notification_mailbox_open;
                     self.current_workspace_state.is_notification_mailbox_open = opening;
@@ -26423,6 +26562,15 @@ impl TypedActionView for Workspace {
                     },
                 );
             }
+            #[cfg(target_os = "macos")]
+            ToggleProjectExplorer | OpenProjectExplorer => {
+                if matches!(action, ToggleProjectExplorer) && self.mux_files_open() {
+                    self.show_mux_dialog(None, ctx);
+                } else {
+                    self.open_mux_files(ctx);
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
             ToggleProjectExplorer => {
                 if *CodeSettings::as_ref(ctx).show_project_explorer {
                     let is_showing = self.left_panel_view.as_ref(ctx).active_view()
@@ -26430,6 +26578,7 @@ impl TypedActionView for Workspace {
                     self.toggle_left_panel_view(&LeftPanelAction::ProjectExplorer, is_showing, ctx);
                 }
             }
+            #[cfg(not(target_os = "macos"))]
             OpenProjectExplorer => {
                 if *CodeSettings::as_ref(ctx).show_project_explorer {
                     self.open_left_panel_view(&LeftPanelAction::ProjectExplorer, ctx);
@@ -26710,6 +26859,10 @@ impl View for Workspace {
 
     fn keymap_context(&self, app: &AppContext) -> warpui::keymap::Context {
         let mut context = Self::default_keymap_context();
+        #[cfg(target_os = "macos")]
+        if self.mux_dialog_open() {
+            context.set.insert("MuxDialogOpen");
+        }
 
         if NetworkStatus::as_ref(app).is_online() {
             context.set.insert("IsOnline");
@@ -26964,6 +27117,8 @@ impl View for Workspace {
                 outer_column.add_child(self.render_tab_bar(self.tab_fixed_width, appearance, app));
             }
             let content = self.render_banner_and_active_tab(app, appearance);
+            #[cfg(target_os = "macos")]
+            let content = self.render_mux_layout(content, app);
             // Hide the vertical tab rail for simplified WASM views (notebooks, shared sessions, etc.)
             let panels_row = self.render_panels(app, Shrinkable::new(1.0, content).finish(), true);
             outer_column.add_child(Shrinkable::new(1.0, panels_row).finish());
@@ -26976,6 +27131,8 @@ impl View for Workspace {
                 outer_column.add_child(self.render_tab_bar(self.tab_fixed_width, appearance, app));
             }
             let content = self.render_banner_and_active_tab(app, appearance);
+            #[cfg(target_os = "macos")]
+            let content = self.render_mux_layout(content, app);
             let panels_row = self.render_panels(app, Shrinkable::new(1.0, content).finish(), false);
             outer_column.add_child(Shrinkable::new(1.0, panels_row).finish());
             Container::new(outer_column.finish())
@@ -27035,6 +27192,11 @@ impl View for Workspace {
                 .with_uniform_padding(WORKSPACE_PADDING)
                 .finish(),
         );
+
+        #[cfg(target_os = "macos")]
+        if let Some(dialog) = self.render_mux_dialog(app) {
+            stack.add_child(dialog);
+        }
 
         if !use_simplified_wasm_tab_bar
             && FeatureFlag::VerticalTabs.is_enabled()
@@ -27979,16 +28141,33 @@ impl View for Workspace {
             } else {
                 (PositionedElementAnchor::BottomRight, ChildAnchor::TopRight)
             };
-            stack.add_positioned_overlay_child(
-                ChildView::new(view).finish(),
+            let configuration = &TabSettings::as_ref(app).header_toolbar_chip_selection;
+            let hidden_anchor = !HeaderToolbarItemKind::NotificationsMailbox.is_available(app)
+                || !configuration.contains_item(&HeaderToolbarItemKind::NotificationsMailbox);
+            let positioning = if cfg!(target_os = "macos") && hidden_anchor {
+                OffsetPositioning::offset_from_parent(
+                    vec2f(
+                        if mailbox_on_left { 12. } else { -12. },
+                        TOTAL_TAB_BAR_HEIGHT + 8.,
+                    ),
+                    ParentOffsetBounds::WindowByPosition,
+                    if mailbox_on_left {
+                        ParentAnchor::TopLeft
+                    } else {
+                        ParentAnchor::TopRight
+                    },
+                    child_anchor,
+                )
+            } else {
                 OffsetPositioning::offset_from_save_position_element(
                     NOTIFICATIONS_MAILBOX_POSITION_ID,
                     Vector2F::zero(),
                     PositionedElementOffsetBounds::WindowByPosition,
                     anchor,
                     child_anchor,
-                ),
-            );
+                )
+            };
+            stack.add_positioned_overlay_child(ChildView::new(view).finish(), positioning);
         }
 
         if !FeatureFlag::AgentMode.is_enabled()
@@ -28254,6 +28433,10 @@ impl View for Workspace {
     }
 
     fn on_focus(&mut self, focus_ctx: &FocusContext, ctx: &mut ViewContext<Self>) {
+        #[cfg(target_os = "macos")]
+        if self.mux_dialog_open() {
+            return;
+        }
         if focus_ctx.is_self_focused() {
             self.focus_active_tab(ctx);
         }

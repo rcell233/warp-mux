@@ -70,3 +70,5 @@ __pycache__/
 # Project notes
 .note/
 .claude/scheduled_tasks.lock
+
+tools/mux-tests/target/

@@ -104,7 +104,7 @@ const PIN_INDICATOR_ICON_SIZE: f32 = 16.;
 const PIN_INDICATOR_CORNER_INSET: f32 = 6.;
 const GROUP_ACTION_BUTTON_PADDING: f32 = 2.;
 const GROUP_ACTION_BUTTON_GAP: f32 = 2.;
-const ROW_CORNER_RADIUS: f32 = 4.;
+pub(super) const ROW_CORNER_RADIUS: f32 = 4.;
 const TAB_GROUP_MEMBER_INDENT: f32 = 12.;
 const TAB_GROUP_ICON_SIZE: f32 = 16.;
 const TAB_GROUP_CONTENT_INSET: f32 = 4.;
@@ -338,7 +338,7 @@ impl PaneRowStackPosition {
     }
 }
 
-fn pane_row_background(
+pub(super) fn pane_row_background(
     pane_color: Option<ThemeFill>,
     is_selected: bool,
     is_in_multi_selection: bool,
