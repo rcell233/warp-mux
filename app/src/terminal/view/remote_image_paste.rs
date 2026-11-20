@@ -3,12 +3,14 @@ use warp_terminal::model::escape_sequences::{BRACKETED_PASTE_END, BRACKETED_PAST
 use warpui::clipboard::ClipboardContent;
 use warpui::{SingletonEntity, ViewContext};
 
-use super::TerminalView;
+use super::{BlockId, TerminalView};
 use crate::ai::agent_management::AgentNotificationsModel;
 use crate::workspace::mux::{files, paste};
 
 #[derive(Default)]
 pub(super) struct RemoteImagePaste {
+    managed_command: Option<String>,
+    reconnect_lease: Option<tempfile::NamedTempFile>,
     binding: Option<(String, String)>,
     pub input_revision: u64,
     pending: usize,
@@ -17,10 +19,39 @@ pub(super) struct RemoteImagePaste {
 }
 
 impl TerminalView {
-    pub(crate) fn bind_remote_image_paste(&mut self, host: Option<&str>, command: &str) {
+    pub(crate) fn bind_mux_session(
+        &mut self,
+        host: Option<&str>,
+        command: &str,
+        reconnect_lease: Option<tempfile::NamedTempFile>,
+    ) {
+        self.remote_image_paste.managed_command = Some(command.to_owned());
+        self.remote_image_paste.reconnect_lease = reconnect_lease;
         self.remote_image_paste.binding = host.map(|host| (host.to_owned(), command.to_owned()));
         self.remote_image_paste.input_revision =
             self.remote_image_paste.input_revision.wrapping_add(1);
+    }
+
+    pub(crate) fn cancel_mux_session(&mut self, ctx: &mut ViewContext<Self>) {
+        // Remove the lease before shutting down SSH so a transport error cannot recreate the session.
+        drop(self.remote_image_paste.reconnect_lease.take());
+        self.remote_image_paste.binding = None;
+        self.shutdown_pty(ctx);
+    }
+
+    pub(super) fn hide_mux_command_header(&mut self, command: &str, block_id: &BlockId) {
+        if self
+            .remote_image_paste
+            .managed_command
+            .as_deref()
+            .is_some_and(|expected| expected.trim() == command.trim())
+        {
+            let mut model = self.model.lock();
+            if let Some(block) = model.block_list_mut().mut_block_from_id(block_id) {
+                block.set_should_hide_command_grid(true);
+            }
+            model.block_list_mut().update_active_block_height();
+        }
     }
 
     fn remote_image_host(&self) -> Option<String> {

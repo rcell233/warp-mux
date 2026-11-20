@@ -323,7 +323,7 @@ impl SnackbarHeader {
         params: &BlockGridParams,
         scroll_position: ScrollPosition,
     ) -> Option<SnackbarHeader> {
-        if !snackbar_enabled {
+        if !snackbar_enabled || block.should_hide_command_grid() {
             self.clear_state();
             return None;
         }

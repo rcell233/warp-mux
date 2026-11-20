@@ -5,6 +5,7 @@ pub mod hosts;
 pub mod navigation;
 pub mod paste;
 pub mod reconnect;
+pub mod terminate;
 
 use std::time::Duration;
 
@@ -27,8 +28,17 @@ pub fn remote_command(command: &str) -> String {
 
 pub async fn discover(host: Option<&str>) -> Result<Discovery> {
     let script = "if command -v zmx >/dev/null 2>&1; then printf '__WARP_ZMX_LIST__\\n'; zmx list; else exit 127; fi";
+    let mut command = host_command(host, script)?;
+    let output = tokio::time::timeout(Duration::from_secs(20), command.kill_on_drop(true).output())
+        .await
+        .context("Session discovery timed out after 20 seconds")?
+        .context("Could not start session discovery")?;
+    parse_discovery(output)
+}
+
+fn host_command(host: Option<&str>, script: &str) -> Result<Command> {
     let remote = remote_command(script);
-    let mut command = match host {
+    let command = match host {
         Some(host) => {
             if !valid_host(host) {
                 bail!("Invalid SSH host alias");
@@ -58,10 +68,10 @@ pub async fn discover(host: Option<&str>) -> Result<Discovery> {
             command
         }
     };
-    let output = tokio::time::timeout(Duration::from_secs(20), command.kill_on_drop(true).output())
-        .await
-        .context("Session discovery timed out after 20 seconds")?
-        .context("Could not start session discovery")?;
+    Ok(command)
+}
+
+fn parse_discovery(output: std::process::Output) -> Result<Discovery> {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     match output.status.code() {

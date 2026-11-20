@@ -24288,6 +24288,12 @@ impl TypedActionView for Workspace {
             AuthenticateMuxHost(host) => self.authenticate_mux_host(*host, ctx),
             #[cfg(target_os = "macos")]
             OpenMuxSession { host, session } => self.open_mux_session(*host, session, ctx),
+            #[cfg(target_os = "macos")]
+            RequestMuxTermination { host, session } => {
+                self.request_mux_termination(*host, session, ctx)
+            }
+            #[cfg(target_os = "macos")]
+            ConfirmMuxTermination => self.confirm_mux_termination(ctx),
             ActivateTab(index) => self.activate_tab(*index, ctx),
             ActivateTabByNumber(num) => {
                 #[cfg(target_os = "macos")]

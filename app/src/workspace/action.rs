@@ -176,6 +176,13 @@ pub enum WorkspaceAction {
         host: super::mux::navigation::HostId,
         session: super::mux::core::Session,
     },
+    #[cfg(target_os = "macos")]
+    RequestMuxTermination {
+        host: super::mux::navigation::HostId,
+        session: super::mux::core::Session,
+    },
+    #[cfg(target_os = "macos")]
+    ConfirmMuxTermination,
     ActivateTab(usize),
     ActivatePrevTab,
     ActivateNextTab,
@@ -996,7 +1003,9 @@ impl WorkspaceAction {
             | SaveMuxSelectedHosts
             | ToggleMuxCandidate(_)
             | RemoveMuxSavedHost(_)
-            | RefreshMuxHost(_) => false,
+            | RefreshMuxHost(_)
+            | RequestMuxTermination { .. }
+            | ConfirmMuxTermination => false,
             #[cfg(not(target_family = "wasm"))]
             ContinueConversationLocally { .. } => true,
             #[cfg(not(target_family = "wasm"))]

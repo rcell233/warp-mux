@@ -29,6 +29,7 @@ use crate::workspace::{Workspace, WorkspaceAction, mux};
 
 mod file_drop;
 mod files;
+mod terminate;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum MuxDialog {
@@ -37,10 +38,12 @@ pub(super) enum MuxDialog {
     ManageHosts,
     ImportHosts,
     NewWindow,
+    TerminateWindow,
 }
 
 #[derive(Default)]
 struct DiscoveryState {
+    generation: u64,
     sessions: Vec<Session>,
     loading: bool,
     ssh_terminal_open: bool,
@@ -51,6 +54,7 @@ struct DiscoveryState {
 pub(super) struct MuxPanelState {
     navigation: Option<Navigation<EntityId>>,
     files: files::FileBrowser,
+    termination: Option<terminate::PendingTermination>,
     window_name_editor: Option<ViewHandle<EditorView>>,
     window_name: String,
     saved: SavedHosts,
@@ -157,6 +161,15 @@ impl Workspace {
         dialog: Option<MuxDialog>,
         ctx: &mut ViewContext<Self>,
     ) {
+        if dialog != Some(MuxDialog::TerminateWindow)
+            && self
+                .mux_panel
+                .termination
+                .as_ref()
+                .is_some_and(|request| !request.busy)
+        {
+            self.mux_panel.termination = None;
+        }
         self.mux_panel.dialog = dialog;
         if dialog.is_some() && dialog != Some(MuxDialog::NewWindow) {
             ctx.focus_self();
@@ -422,6 +435,8 @@ impl Workspace {
         }
         state.loading = true;
         state.error = None;
+        state.generation = state.generation.wrapping_add(1);
+        let generation = state.generation;
         ctx.spawn(
             async move { mux::discover(target.ssh_alias()).await },
             move |workspace, result, ctx| {
@@ -435,6 +450,9 @@ impl Workspace {
                     return;
                 }
                 let state = workspace.mux_panel.discovery.entry(host).or_default();
+                if state.generation != generation {
+                    return;
+                }
                 state.loading = false;
                 let first = match result {
                     Ok(discovery) => {
@@ -465,6 +483,9 @@ impl Workspace {
         session: &Session,
         ctx: &mut ViewContext<Self>,
     ) {
+        if self.mux_session_is_terminating(host, session) {
+            return;
+        }
         let Some(nav) = self.mux_panel.navigation.as_ref() else {
             return;
         };
@@ -481,6 +502,23 @@ impl Workspace {
             return;
         }
         let target = group.target.clone();
+        let reconnect_lease = if target.ssh_alias().is_some() {
+            match (|| -> std::io::Result<_> {
+                let directory = registry_path().with_file_name("connections");
+                std::fs::create_dir_all(&directory)?;
+                tempfile::NamedTempFile::new_in(directory)
+            })() {
+                Ok(lease) => Some(lease),
+                Err(error) => {
+                    self.mux_panel.discovery.entry(host).or_default().error =
+                        Some(format!("Could not prepare SSH connection: {error}"));
+                    ctx.notify();
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         self.mux_panel.creating_for = Some(host);
         self.add_tab_with_pane_layout(
             PanesLayout::SingleTerminal(Box::new(NewTerminalOptions {
@@ -500,11 +538,15 @@ impl Workspace {
                 let command = match target.ssh_alias() {
                     Some(alias) => format!(
                         "command /bin/sh -c {}",
-                        shell.shell_escape(&mux::reconnect::ssh_session_script(alias, session))
+                        shell.shell_escape(&mux::reconnect::ssh_session_script(
+                            alias,
+                            session,
+                            reconnect_lease.as_ref().expect("SSH lease exists").path(),
+                        ))
                     ),
                     None => format!("command /bin/sh -c {}", shell.shell_escape(&remote)),
                 };
-                view.bind_remote_image_paste(target.ssh_alias(), &command);
+                view.bind_mux_session(target.ssh_alias(), &command, reconnect_lease);
                 view.set_pending_command(&command, ctx);
             });
             if let Some(nav) = self.mux_panel.navigation.as_mut() {
@@ -683,17 +725,44 @@ impl Workspace {
                     .sessions
                     .get(&session.name)
                     .is_some_and(|native| *native == host.active);
-                list.add_child(self.mux_row(
-                    &format!("window:{}:{}", host.id, session.name),
-                    &session.name,
-                    Icon::Terminal,
-                    WorkspaceAction::OpenMuxSession {
-                        host: host.id,
-                        session: session.clone(),
-                    },
-                    active,
-                    appearance,
-                ));
+                list.add_child(
+                    Flex::row()
+                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                        .with_child(
+                            Expanded::new(
+                                1.,
+                                self.mux_row(
+                                    &format!("window:{}:{}", host.id, session.name),
+                                    &session.name,
+                                    Icon::Terminal,
+                                    WorkspaceAction::OpenMuxSession {
+                                        host: host.id,
+                                        session: session.clone(),
+                                    },
+                                    active,
+                                    appearance,
+                                ),
+                            )
+                            .finish(),
+                        )
+                        .with_child(
+                            self.mux_button(
+                                &format!("terminate:{}:{}", host.id, session.name),
+                                button::Content::Icon(Icon::X),
+                                WorkspaceAction::RequestMuxTermination {
+                                    host: host.id,
+                                    session: session.clone(),
+                                },
+                                false,
+                                state
+                                    .termination
+                                    .as_ref()
+                                    .is_some_and(|request| request.busy),
+                                appearance,
+                            ),
+                        )
+                        .finish(),
+                );
             }
             if let Some(error) = &discovery.error {
                 list.add_child(mux_note(error, appearance));
@@ -789,6 +858,9 @@ impl Workspace {
         if dialog == MuxDialog::Files {
             return Some(self.render_mux_files(app));
         }
+        if dialog == MuxDialog::TerminateWindow {
+            return self.render_mux_termination(app);
+        }
         let window_name_exists = state
             .navigation
             .as_ref()
@@ -801,7 +873,7 @@ impl Workspace {
             });
         let appearance = Appearance::as_ref(app);
         let (title, subtitle) = match dialog {
-            MuxDialog::Files => unreachable!(),
+            MuxDialog::Files | MuxDialog::TerminateWindow => unreachable!(),
             MuxDialog::NewHost => (
                 "New host tab",
                 "Open a local workspace or connect to a saved SSH host.",
@@ -846,7 +918,7 @@ impl Workspace {
             body.add_child(mux_note(error, appearance));
         }
         match dialog {
-            MuxDialog::Files => unreachable!(),
+            MuxDialog::Files | MuxDialog::TerminateWindow => unreachable!(),
             MuxDialog::NewWindow => {
                 if let Some(editor) = &state.window_name_editor {
                     body.add_child(
@@ -965,7 +1037,7 @@ impl Workspace {
             .with_main_axis_alignment(MainAxisAlignment::End)
             .with_spacing(8.);
         match dialog {
-            MuxDialog::Files => unreachable!(),
+            MuxDialog::Files | MuxDialog::TerminateWindow => unreachable!(),
             MuxDialog::NewWindow => {
                 footer.add_child(self.mux_button(
                     "cancel-window",
@@ -1064,6 +1136,16 @@ impl Workspace {
         };
         let mut options = button::Options::default(appearance);
         options.disabled = disabled;
+        if matches!(&action, WorkspaceAction::RequestMuxTermination { .. }) {
+            options.size = button::Size::Small;
+            options.tooltip = Some(button::Tooltip {
+                params: ui_components::tooltip::Params {
+                    label: "Terminate zmx window…".into(),
+                    options: ui_components::tooltip::Options::default(appearance),
+                },
+                alignment: button::TooltipAlignment::Right,
+            });
+        }
         options.on_click = Some(Box::new(move |ctx, _, _| {
             ctx.dispatch_typed_action(action.clone())
         }));

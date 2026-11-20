@@ -9,7 +9,7 @@ fn connection_loss_retries_same_command_then_stops_on_clean_exit() {
         quote(counter.to_str().unwrap()),
         quote(counter.to_str().unwrap())
     );
-    let output = run_in_terminal(&retry_transport(&command));
+    let output = run_in_terminal(&retry_transport(&command, None));
     assert!(
         output.status.success(),
         "{}",
@@ -32,7 +32,7 @@ fn retries_immediately_then_every_two_seconds_without_backoff() {
     let script = format!(
         "sleep() {{ printf '%s\\n' \"$1\" >> {}; }}; {}",
         quote(delays.to_str().unwrap()),
-        retry_transport(&command)
+        retry_transport(&command, None)
     );
 
     let output = run_in_terminal(&script);
@@ -48,7 +48,7 @@ fn retries_immediately_then_every_two_seconds_without_backoff() {
 
 #[test]
 fn remote_errors_do_not_restart_or_create_another_session() {
-    let output = run_in_terminal(&retry_transport("(exit 7)"));
+    let output = run_in_terminal(&retry_transport("(exit 7)", None));
     assert_eq!(output.status.code(), Some(7));
     assert!(output.stdout.is_empty());
 }
@@ -58,7 +58,8 @@ fn session_command_preserves_shell_arguments() {
     let session = Session {
         name: "project '雪' ; $(bad)".into(),
     };
-    let script = ssh_session_script("prod", &session);
+    let lease = tempfile::NamedTempFile::new().unwrap();
+    let script = ssh_session_script("prod", &session, lease.path());
     let command = script.replace("/usr/bin/ssh", "printf '%s\\n'");
     let output = run_in_terminal(&command);
     assert!(
@@ -80,4 +81,23 @@ fn run_in_terminal(script: &str) -> std::process::Output {
         .args(["-c", &command])
         .output()
         .unwrap()
+}
+
+#[test]
+fn cancelled_window_does_not_reconnect_after_transport_failure() {
+    let lease = tempfile::NamedTempFile::new().unwrap();
+    let command = format!("rm {}; (exit 255)", quote(lease.path().to_str().unwrap()));
+    let output = run_in_terminal(&retry_transport(&command, Some(lease.path())));
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn cancelled_window_does_not_start_a_queued_connection() {
+    let lease = tempfile::NamedTempFile::new().unwrap();
+    let script = retry_transport("printf RECREATED", Some(lease.path()));
+    drop(lease);
+    let output = run_in_terminal(&script);
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
 }

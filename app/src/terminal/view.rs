@@ -12856,6 +12856,9 @@ impl TerminalView {
                 }
                 self.did_notify_long_running = false;
 
+                #[cfg(target_os = "macos")]
+                self.hide_mux_command_header(command, block_id);
+
                 // Snapshot the prompt state as of when the command began executing.
                 // Commands may themselves affect the prompt (if running `git checkout`), for
                 // example, so we want the saved prompt state to match what the user saw when
