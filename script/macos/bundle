@@ -217,6 +217,7 @@ RELEASE_CHANNEL="dev"
 FEATURES="release_bundle,cocoa_sentry,extern_plist"
 REGISTER_SERVICES=true
 DEBUG=false
+CARGO_PROFILE_OVERRIDE=""
 ARTIFACT="app"
 CODESIGN=true
 SELFSIGN=false
@@ -231,6 +232,15 @@ while (( "$#" )); do
     --debug)
       DEBUG=true
       shift
+      ;;
+    --profile)
+      if [ -n "${2:-}" ] && [ "${2:0:1}" != "-" ]; then
+        CARGO_PROFILE_OVERRIDE="$2"
+        shift 2
+      else
+        echo "Error: Argument for $1 is missing" >&2
+        exit 1
+      fi
       ;;
     # Only run `cargo check` without producing a bundle
     --check-only)
@@ -380,6 +390,10 @@ else
   else
     CARGO_PROFILE="release-lto"
   fi
+fi
+
+if [[ -n "$CARGO_PROFILE_OVERRIDE" ]]; then
+  CARGO_PROFILE="$CARGO_PROFILE_OVERRIDE"
 fi
 
 TARGET_PROFILE_DIR="$CARGO_PROFILE"
@@ -979,9 +993,9 @@ if [[ "$ARTIFACT" = app ]]; then
       --filesystem APFS
     )
 
-    # Skip running an AppleScript to format the DMG contents if running in Namespace - this consistently times out.
+    # Skip Finder automation on headless CI runners, where AppleScript can time out.
     # See https://github.com/create-dmg/create-dmg/issues/72
-    if [[ "${RUNNER_NAME:-}" == nsc-* ]]; then
+    if [[ "${GITHUB_ACTIONS:-}" == "true" || "${RUNNER_NAME:-}" == nsc-* ]]; then
       args+=(--skip-jenkins)
     fi
 

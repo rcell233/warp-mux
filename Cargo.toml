@@ -483,6 +483,13 @@ miniz_oxide.opt-level = 3
 inherits = "release"
 lto = "thin"
 
+# Keep fork test builds within the memory budget of standard hosted macOS runners.
+[profile.mux]
+inherits = "release"
+debug = 0
+lto = false
+codegen-units = 256
+
 # A shorthand profile for `release-lto`.
 # Windows enforces that any path is a maximum of 255 characters and
 # the length of this profile is sufficiently long that it can cause

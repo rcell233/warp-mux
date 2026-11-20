@@ -192,6 +192,11 @@ impl TabShortcutModifierState {
         changed
     }
 
+    pub fn is_control_held(&self) -> bool {
+        self.held_keys.contains(&KeyCode::ControlLeft)
+            || self.held_keys.contains(&KeyCode::ControlRight)
+    }
+
     fn held_kinds(&self) -> HashSet<ShortcutModifierKind> {
         self.revealed_keys
             .iter()
@@ -253,7 +258,9 @@ fn tab_group_menu_entry_flags(
 /// Exposed so binding-description overrides in `workspace/mod.rs` and context-
 /// menu builders here can share a single predicate.
 pub fn uses_vertical_tabs(ctx: &AppContext) -> bool {
-    FeatureFlag::VerticalTabs.is_enabled() && *TabSettings::as_ref(ctx).use_vertical_tabs
+    !cfg!(target_os = "macos")
+        && FeatureFlag::VerticalTabs.is_enabled()
+        && *TabSettings::as_ref(ctx).use_vertical_tabs
 }
 
 const WARP_2_TAB_COLOR_OPACITY: Opacity = 25;
@@ -1098,6 +1105,7 @@ pub struct TabComponent<'a> {
     /// (multi-tab menu vs single-tab menu).
     is_in_multi_tab_selection: bool,
     shortcut_hint_label: Option<String>,
+    navigation_actions: Option<(WorkspaceAction, WorkspaceAction)>,
 }
 
 /// Structure that holds TabComponent styles.
@@ -1267,7 +1275,25 @@ impl<'a> TabComponent<'a> {
             locator,
             is_in_multi_tab_selection: false,
             shortcut_hint_label,
+            navigation_actions: None,
         }
+    }
+
+    pub fn with_navigation(
+        mut self,
+        title: String,
+        activate: WorkspaceAction,
+        close: WorkspaceAction,
+    ) -> Self {
+        self.title = title.clone();
+        self.has_custom_title = true;
+        self.indicator = Indicator::None;
+        self.tooltip_message = Some(title);
+        self.tooltip_directory = None;
+        self.tooltip_git_branch = None;
+        self.navigation_actions = Some((activate, close));
+        self.for_drag_ghost = true;
+        self
     }
 
     /// Marks this tab as being rendered inside the floating chip used by the
@@ -1537,6 +1563,11 @@ impl<'a> TabComponent<'a> {
         let button = if is_hovered && should_render {
             let tab_index = self.tab_index;
             let close_mouse_state = self.tab.close_mouse_state.clone();
+            let close_action = self
+                .navigation_actions
+                .as_ref()
+                .map(|(_, close)| close.clone())
+                .unwrap_or(WorkspaceAction::CloseTab(tab_index));
             let position_id = tab_position_id(tab_index);
             let is_last_tab = tab_index == self.tab_bar.tab_count - 1;
 
@@ -1595,7 +1626,7 @@ impl<'a> TabComponent<'a> {
                     if is_last_tab {
                         ctx.dispatch_typed_action(WorkspaceAction::TabHoverWidthEnd);
                     }
-                    ctx.dispatch_typed_action(WorkspaceAction::CloseTab(tab_index))
+                    ctx.dispatch_typed_action(close_action.clone())
                 })
                 .finish()
         } else if !is_narrow && self.show_pin_indicator() {
@@ -2068,6 +2099,19 @@ impl<'a> TabComponent<'a> {
             .finish()
         };
 
+        if self.navigation_actions.is_some() {
+            return Container::new(stack)
+                .with_vertical_padding(2.)
+                .with_background(background_color)
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
+                .with_border(Border::all(1.).with_border_fill(if is_active {
+                    internal_colors::fg_overlay_2(theme).into()
+                } else {
+                    Fill::None
+                }))
+                .finish();
+        }
+
         // Grouped member: inset rounded highlight, no side dividers. It still
         // gets its own drop target so a dragged pane can land at this member's
         // slot (and the member highlights while hovered).
@@ -2158,7 +2202,9 @@ impl UiComponent for TabComponent<'_> {
         let draggable_state = self.tab.draggable_state.clone();
         let mouse_close_state = self.tab.close_mouse_state.clone();
         // Capture before `self` is moved into the Hoverable closure below.
+        let is_host_tab = self.navigation_actions.is_some();
         let for_drag_ghost = self.for_drag_ghost;
+        let navigation_actions = self.navigation_actions.clone();
         let sole_grouped_member = self.sole_grouped_member;
         let locator = self.locator;
         let is_in_multi_tab_selection = self.is_in_multi_tab_selection;
@@ -2301,54 +2347,61 @@ impl UiComponent for TabComponent<'_> {
 
         // We only want the on_click action to take effect on the tab, if it's not being renamed at a moment.
         // Note that clicking on other tabs is still ok.
-        if !is_tab_being_renamed {
-            // Modifier-aware mouse-down: shift extends the selection range,
-            // cmd toggles a tab in/out of the selection, plain press
-            // activates.
-            tab = tab.on_mouse_down_with_modifiers(move |ctx, _, _, modifiers| {
-                let close_hovered = mouse_close_state
-                    .lock()
-                    .expect("lock acquired")
-                    .is_hovered();
-                if close_hovered {
-                    return;
-                }
-                if modifiers.shift && FeatureFlag::GroupedTabs.is_enabled() {
-                    ctx.dispatch_typed_action(WorkspaceAction::ShiftSelectTabRange { locator });
-                } else if modifiers.cmd && FeatureFlag::GroupedTabs.is_enabled() {
-                    ctx.dispatch_typed_action(WorkspaceAction::ToggleTabMultiSelection { locator });
-                } else {
-                    ctx.dispatch_typed_action(WorkspaceAction::ActivateTab(tab_index));
-                }
-            });
-
-            tab = tab.on_double_click(move |ctx, _app, _| {
-                ctx.dispatch_typed_action(WorkspaceAction::RenameTab(tab_index));
-            });
-        }
-
-        tab = tab.on_right_click(move |ctx, _app, position| {
-            let anchor = TabContextMenuAnchor::Pointer(position);
-            if is_in_multi_tab_selection {
-                ctx.dispatch_typed_action(WorkspaceAction::ToggleTabSelectionRightClickMenu {
-                    tab_index,
-                    anchor,
+        if let Some((activate, close)) = navigation_actions {
+            tab = tab.on_click(move |ctx, _, _| ctx.dispatch_typed_action(activate.clone()));
+            tab = tab.on_middle_click(move |ctx, _, _| ctx.dispatch_typed_action(close.clone()));
+        } else {
+            if !is_tab_being_renamed {
+                // Modifier-aware mouse-down: shift extends the selection range,
+                // cmd toggles a tab in/out of the selection, plain press
+                // activates.
+                tab = tab.on_mouse_down_with_modifiers(move |ctx, _, _, modifiers| {
+                    let close_hovered = mouse_close_state
+                        .lock()
+                        .expect("lock acquired")
+                        .is_hovered();
+                    if close_hovered {
+                        return;
+                    }
+                    if modifiers.shift && FeatureFlag::GroupedTabs.is_enabled() {
+                        ctx.dispatch_typed_action(WorkspaceAction::ShiftSelectTabRange { locator });
+                    } else if modifiers.cmd && FeatureFlag::GroupedTabs.is_enabled() {
+                        ctx.dispatch_typed_action(WorkspaceAction::ToggleTabMultiSelection {
+                            locator,
+                        });
+                    } else {
+                        ctx.dispatch_typed_action(WorkspaceAction::ActivateTab(tab_index));
+                    }
                 });
-            } else {
-                // Right-clicking outside the multi-selection cancels it.
-                if FeatureFlag::GroupedTabs.is_enabled() {
-                    ctx.dispatch_typed_action(WorkspaceAction::ClearTabMultiSelection);
-                }
-                ctx.dispatch_typed_action(WorkspaceAction::ToggleTabRightClickMenu {
-                    tab_index,
-                    anchor,
+
+                tab = tab.on_double_click(move |ctx, _app, _| {
+                    ctx.dispatch_typed_action(WorkspaceAction::RenameTab(tab_index));
                 });
             }
-        });
-        if ContextFlag::CloseWindow.is_enabled() || !is_last_tab {
-            tab = tab.on_middle_click(move |ctx, _app, _position| {
-                ctx.dispatch_typed_action(WorkspaceAction::CloseTab(tab_index));
+
+            tab = tab.on_right_click(move |ctx, _app, position| {
+                let anchor = TabContextMenuAnchor::Pointer(position);
+                if is_in_multi_tab_selection {
+                    ctx.dispatch_typed_action(WorkspaceAction::ToggleTabSelectionRightClickMenu {
+                        tab_index,
+                        anchor,
+                    });
+                } else {
+                    // Right-clicking outside the multi-selection cancels it.
+                    if FeatureFlag::GroupedTabs.is_enabled() {
+                        ctx.dispatch_typed_action(WorkspaceAction::ClearTabMultiSelection);
+                    }
+                    ctx.dispatch_typed_action(WorkspaceAction::ToggleTabRightClickMenu {
+                        tab_index,
+                        anchor,
+                    });
+                }
             });
+            if ContextFlag::CloseWindow.is_enabled() || !is_last_tab {
+                tab = tab.on_middle_click(move |ctx, _app, _position| {
+                    ctx.dispatch_typed_action(WorkspaceAction::CloseTab(tab_index));
+                });
+            }
         }
 
         // Note: Tooltip delay is now handled separately in the tooltip overlay
@@ -2401,7 +2454,15 @@ impl UiComponent for TabComponent<'_> {
             let tab_with_drag: Box<dyn Element> = draggable.finish();
             SavePosition::new(tab_with_drag, &tab_position_id(tab_index)).finish()
         };
-        if FeatureFlag::NewTabStyling.is_enabled() {
+        if is_host_tab {
+            Shrinkable::new(
+                1.0,
+                Container::new(full_tab)
+                    .with_vertical_margin(3.)
+                    .with_margin_left(3.)
+                    .finish(),
+            )
+        } else if FeatureFlag::NewTabStyling.is_enabled() {
             Shrinkable::new(1.0, full_tab)
         } else {
             Shrinkable::new(

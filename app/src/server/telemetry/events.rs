@@ -463,6 +463,7 @@ pub enum PluginChipTelemetryKind {
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotificationAgentVariant {
+    FileTransfer,
     /// Warp's built-in agent (Oz).
     Oz,
     /// A CLI agent (e.g., Claude Code, Gemini CLI, etc.).
@@ -472,6 +473,7 @@ pub enum NotificationAgentVariant {
 impl From<NotificationSourceAgent> for NotificationAgentVariant {
     fn from(agent: NotificationSourceAgent) -> Self {
         match agent {
+            NotificationSourceAgent::FileTransfer { .. } => Self::FileTransfer,
             NotificationSourceAgent::Oz { .. } => Self::Oz,
             NotificationSourceAgent::CLI { agent, .. } => Self::CLIAgent(agent),
         }
