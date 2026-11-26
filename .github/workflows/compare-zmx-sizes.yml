@@ -31,3 +31,10 @@ jobs:
           tar -xzf zmx.tar.gz zmx
           echo "$CHECKSUM  zmx" | sha256sum -c -
           python3 "$GITHUB_WORKSPACE/.github/diagnostics/compare_resize.py" "$PWD/zmx" "$VERSION"
+      - name: Observe agy 1.5.18 in a signed-out session
+        run: |
+          cd "$RUNNER_TEMP/zmx-bin"
+          curl -fsSL --retry 2 https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.18-6386224290725888/linux-x64/cli_linux_x64.tar.gz -o agy.tgz
+          echo "ef379ec869719112f696e8c7cfddf776618712e58fc38e53df80801d6528abb4677782c7c8778f9c09c9123fa44c2c32675d228c06f2a8f7a8f4214e75f5bb26  agy.tgz" | sha512sum -c -
+          tar -xzf agy.tgz antigravity
+          python3 "$GITHUB_WORKSPACE/.github/diagnostics/observe_agy.py" "$PWD/zmx" "$PWD/antigravity"
