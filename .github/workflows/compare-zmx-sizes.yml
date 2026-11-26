@@ -1,0 +1,33 @@
+name: Compare zmx client sizes
+on:
+  push:
+    branches: [diagnostics/zmx-client-sizes]
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {version: '0.8.1', checksum: '48839299cb8bd0aaf1038219541290db19442f354c8fc3cd86ffc28f8aa33816'}
+          - {version: '1.0.2', checksum: '00d12fdda6eff5874687f25c349c5d424f21138002ceaf5bf7018371b50840db'}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+          lfs: false
+          sparse-checkout: .github/diagnostics
+      - name: Compare passive replies and deliberate handoff
+        env:
+          VERSION: ${{ matrix.version }}
+          CHECKSUM: ${{ matrix.checksum }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/zmx-bin"
+          cd "$RUNNER_TEMP/zmx-bin"
+          curl -fsSL --retry 2 "https://zmx.sh/a/zmx-${VERSION}-linux-x86_64.tar.gz" -o zmx.tar.gz
+          tar -xzf zmx.tar.gz zmx
+          echo "$CHECKSUM  zmx" | sha256sum -c -
+          python3 "$GITHUB_WORKSPACE/.github/diagnostics/compare_resize.py" "$PWD/zmx" "$VERSION"
